@@ -2,6 +2,7 @@ use crate::{serialize::Serialize, user::User};
 use secp256k1::PublicKey;
 use std::{collections::HashMap, fmt};
 
+#[derive(Copy, Clone)]
 pub struct UniversalId {
     is_continuation: bool,
     is_magic: bool,
@@ -27,6 +28,10 @@ impl UniversalId {
 
     pub fn get_value(&self) -> u16 {
         self.value
+    }
+
+    pub fn increment(&mut self) {
+        self.value += 1
     }
 }
 

@@ -1,9 +1,10 @@
-use crate::transaction::TransactionValue;
+use crate::{transaction::TransactionValue, universal_id::UniversalId};
 use secp256k1::PublicKey;
 use std::fmt;
 
 pub struct User {
     pk: PublicKey,
+    current_uid: UniversalId,
     current_balance: u32,
     ids: Vec<u32>,
 }
@@ -12,6 +13,7 @@ impl User {
     pub fn new(pk: PublicKey) -> User {
         User {
             pk,
+            current_uid: UniversalId::new(false, false, 0),
             current_balance: 0,
             ids: Vec::new(),
         }
@@ -19,6 +21,10 @@ impl User {
 
     pub fn get_balance(&self) -> u32 {
         self.current_balance
+    }
+
+    pub fn get_uid(&self) -> UniversalId {
+        self.current_uid
     }
 
     pub fn give(&mut self, value: TransactionValue) -> Result<bool, String> {
@@ -56,6 +62,7 @@ impl User {
                 ));
             }
         }
+        self.current_uid.increment();
         return Ok(true);
     }
 }

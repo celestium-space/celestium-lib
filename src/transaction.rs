@@ -116,6 +116,12 @@ impl Serialize for PublicKey {
         i: &mut usize,
         _: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<PublicKey>, String> {
+        if data.len() < 33 {
+            return Err(format!(
+                "Too little data for public key, expected at least 33 got {}",
+                data.len(),
+            ));
+        }
         match PublicKey::from_slice(&data[*i..*i + 33]) {
             Ok(public_key) => {
                 *i += public_key.serialized_len()?;
@@ -272,17 +278,21 @@ impl TransactionBlock {
         return self.transactions.len() * 188 + self.signatures.len() * 72;
     }
 
-    pub fn sign(&mut self, sk_file_location: PathBuf) {
-        let mut f = File::open(sk_file_location).unwrap();
-        let mut buffer = Vec::new();
-        f.read_to_end(&mut buffer).unwrap();
+    pub fn sign(&mut self, sk: SecretKey) {
         let secp = Secp256k1::new();
-        let mut i = 0;
-        let sk =
-            *SecretKey::from_serialized(buffer.as_slice(), &mut i, &mut HashMap::new()).unwrap();
         let bytes = &self.serialize_content().unwrap();
         let message = Message::from_slice(Sha256::digest(bytes).as_slice()).unwrap();
         self.signatures.push(secp.sign(&message, &sk));
+    }
+
+    pub fn sign_with_file(&mut self, sk_file_location: PathBuf) {
+        let mut f = File::open(sk_file_location).unwrap();
+        let mut buffer = Vec::new();
+        f.read_to_end(&mut buffer).unwrap();
+        let mut i = 0;
+        let sk =
+            *SecretKey::from_serialized(buffer.as_slice(), &mut i, &mut HashMap::new()).unwrap();
+        self.sign(sk);
     }
 
     fn serialize_content(&mut self) -> Result<Vec<u8>, String> {

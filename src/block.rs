@@ -13,6 +13,15 @@ impl BlockHash {
         BlockHash { value: value }
     }
 
+    pub fn from_hash(data: Vec<u8>) -> BlockHash {
+        BlockHash {
+            value: ((data[0] as u32) << 24)
+                + ((data[1] as u32) << 16)
+                + ((data[2] as u32) << 8)
+                + (data[3] as u32),
+        }
+    }
+
     pub fn contains_enough_work(&self) -> bool {
         true
     }
