@@ -76,8 +76,8 @@ impl Blockchain {
                 let valid_hash = hash.contains_enough_work();
                 if !valid_hash {
                     return Err(format!(
-                        "Block at byte {} with magic {}, hashes to {}, which does not represent enough work",
-                        i, block.magic, hash
+                        "Block with len {} at byte {} with magic {}, hashes to {}, which does not represent enough work",
+                        block_len, *i - block_len, block.magic, hash
                     ));
                 }
                 tmp_blocks.push(block);
@@ -100,7 +100,6 @@ impl Blockchain {
         for transaction_block in transaction_blocks.iter() {
             transaction_blocks_len += transaction_block.serialized_len()?;
         }
-        let uid = UniversalId::new(false, true, 8);
         let back_hash;
         if !self.blocks.is_empty() {
             let mut last_block_serialized = vec![0; self.blocks.last().unwrap().serialized_len()?];
@@ -118,6 +117,7 @@ impl Blockchain {
             back_hash = Box::new(BlockHash::default());
         }
         let magic = Magic::new(0);
+        let uid = UniversalId::new(false, true, magic.serialized_len()? as u16);
         let mut unmined_block = vec![
             0;
             transaction_blocks_len
