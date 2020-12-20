@@ -8,7 +8,11 @@ use crate::{
 };
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
+use std::{collections::HashMap, fs::File, io::Read, path::PathBuf, sync::mpsc::channel, thread};
+use workerpool::{
+    thunk::{Thunk, ThunkWorker},
+    Pool,
+};
 
 pub struct Wallet {
     blockchain: Blockchain,
@@ -94,20 +98,92 @@ impl Wallet {
         let mut unmined_block = self
             .blockchain
             .create_unmined_block(transaction_blocks, self.pk.unwrap())?;
-        let mut hash = BlockHash::new_unworked();
-        let mut magic = Magic::new(0);
-        let total_len = unmined_block.len();
-        let magic_len = magic.serialized_len()?;
-        while !hash.contains_enough_work() {
-            magic.increase();
-            magic.serialize_into(&mut unmined_block, &mut (total_len - magic_len))?;
-            hash = *BlockHash::from_serialized(
-                Sha256::digest(&unmined_block).as_slice(),
-                &mut 0,
-                &mut HashMap::new(),
-            )?;
+        let mut magic_with_enough_work = None;
+
+        let n_workers = 32;
+        let work = 10000;
+        let pool = Pool::<ThunkWorker<Option<Magic>>>::new(n_workers);
+
+        let (tx, rx) = channel();
+
+        let mut i = 0;
+        while magic_with_enough_work.is_none() {
+            for _ in 0..n_workers {
+                let mut my_unmined_block = vec![0; unmined_block.len()];
+                my_unmined_block.copy_from_slice(&unmined_block);
+                pool.execute_to(
+                    tx.clone(),
+                    Thunk::of(move || {
+                        let total_len = my_unmined_block.len();
+                        let mut magic = Magic::new(i);
+                        for _ in i..i + work {
+                            let magic_len = magic.serialized_len().unwrap();
+                            magic
+                                .serialize_into(&mut my_unmined_block, &mut (total_len - magic_len))
+                                .unwrap();
+                            let hash = *BlockHash::from_serialized(
+                                Sha256::digest(&my_unmined_block).as_slice(),
+                                &mut 0,
+                                &mut HashMap::new(),
+                            )
+                            .unwrap();
+                            if hash.contains_enough_work() {
+                                return Some(magic);
+                            }
+                            magic.increase();
+                        }
+                        None
+                    }),
+                );
+                i += work;
+            }
+            for magic in rx.iter().take(n_workers) {
+                if magic.is_some() {
+                    magic_with_enough_work = magic;
+                }
+            }
         }
-        Ok(unmined_block.to_vec())
+        let magic = magic_with_enough_work.unwrap();
+        let mut i = unmined_block.len() - magic.serialized_len()?;
+        magic.serialize_into(&mut unmined_block, &mut i)?;
+        Ok(unmined_block)
+
+        // while hash_with_enough_work.is_none() {
+        //     let mut thread_handles = Vec::new();
+        //     for _ in 0..thread_count {
+        //         let my_unmined_block = vec![0; unmined_block.len()];
+        //         my_unmined_block.copy_from_slice(&unmined_block);
+        //         thread_handles.push(thread::spawn(|| {
+        //             let total_len = my_unmined_block.len();
+        //             for value in i..i + thread_work {
+        //                 let magic = Magic::new(value);
+        //                 let magic_len = magic.serialized_len().unwrap();
+        //                 magic
+        //                     .serialize_into(&mut unmined_block, &mut (total_len - magic_len))
+        //                     .unwrap();
+        //                 let hash = *BlockHash::from_serialized(
+        //                     Sha256::digest(&unmined_block).as_slice(),
+        //                     &mut 0,
+        //                     &mut HashMap::new(),
+        //                 )
+        //                 .unwrap();
+        //                 if hash.contains_enough_work() {
+        //                     return Some(hash);
+        //                 }
+        //             }
+        //             None
+        //         }));
+        //         i += thread_work;
+        //     }
+        //     for thread_handle in thread_handles {
+        //         let result = thread_handle.join().unwrap();
+        //         if result.is_some() {
+        //             hash_with_enough_work = result;
+        //         }
+        //     }
+        //     i += 1;
+        // }
+        // Ok(unmined_block.to_vec())
     }
 
     pub fn mine_most_valueable_transaction_blocks(
