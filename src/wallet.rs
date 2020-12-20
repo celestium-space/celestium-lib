@@ -6,7 +6,6 @@ use crate::{
     transaction::{Transaction, TransactionBlock, TransactionValue},
     universal_id::UniversalId,
 };
-use crossterm::terminal;
 use rayon::prelude::*;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
@@ -94,14 +93,19 @@ impl Wallet {
     pub fn mine_transaction_blocks(
         &self,
         transaction_blocks: &[TransactionBlock],
+        range: Option<(u32, u32)>,
     ) -> Result<Vec<u8>, String> {
         let mut unmined_block = self
             .blockchain
             .create_unmined_block(transaction_blocks, self.pk.unwrap())?;
-        let mut magic_with_enough_work = None;
 
-        let mut i = 0;
-        println!("0.000% of all magic tested");
+        let mut magic_with_enough_work = None;
+        let (mut i, end_i) = match range {
+            Some(r) => (r.0, r.1),
+            None => (0, u32::MAX),
+        };
+        let mut latest_print = 0.1;
+        let print_scale = 0.1;
         while magic_with_enough_work.is_none() {
             let list: Vec<u32> = (0..N_PAR_WORKERS).collect();
             let slice = list.as_slice();
@@ -131,55 +135,19 @@ impl Wallet {
             let best_magic = magic.min();
             if best_magic.is_some() {
                 magic_with_enough_work = best_magic;
-            } else {
-                println!(
-                    "{0:.3}% of all magic tested",
-                    (i as f64 / u32::MAX as f64) * 100f64
-                );
+            } else if ((i as f64 / end_i as f64) * 100f64) > latest_print + print_scale {
+                latest_print += print_scale;
+                println!("{0:.1}% mined", latest_print);
             }
             i += PAR_WORK * N_PAR_WORKERS;
+            if i > end_i {
+                break;
+            }
         }
         let magic = magic_with_enough_work.unwrap();
         let mut i = unmined_block.len() - magic.serialized_len()?;
         magic.serialize_into(&mut unmined_block, &mut i)?;
         Ok(unmined_block)
-
-        // while hash_with_enough_work.is_none() {
-        //     let mut thread_handles = Vec::new();
-        //     for _ in 0..thread_count {
-        //         let my_unmined_block = vec![0; unmined_block.len()];
-        //         my_unmined_block.copy_from_slice(&unmined_block);
-        //         thread_handles.push(thread::spawn(|| {
-        //             let total_len = my_unmined_block.len();
-        //             for value in i..i + thread_work {
-        //                 let magic = Magic::new(value);
-        //                 let magic_len = magic.serialized_len().unwrap();
-        //                 magic
-        //                     .serialize_into(&mut unmined_block, &mut (total_len - magic_len))
-        //                     .unwrap();
-        //                 let hash = *BlockHash::from_serialized(
-        //                     Sha256::digest(&unmined_block).as_slice(),
-        //                     &mut 0,
-        //                     &mut HashMap::new(),
-        //                 )
-        //                 .unwrap();
-        //                 if hash.contains_enough_work() {
-        //                     return Some(hash);
-        //                 }
-        //             }
-        //             None
-        //         }));
-        //         i += thread_work;
-        //     }
-        //     for thread_handle in thread_handles {
-        //         let result = thread_handle.join().unwrap();
-        //         if result.is_some() {
-        //             hash_with_enough_work = result;
-        //         }
-        //     }
-        //     i += 1;
-        // }
-        // Ok(unmined_block.to_vec())
     }
 
     pub fn mine_most_valueable_transaction_blocks(
@@ -194,7 +162,7 @@ impl Wallet {
             ));
         };
         self.transaction_blocks.sort();
-        self.mine_transaction_blocks(&self.transaction_blocks[0..amount])
+        self.mine_transaction_blocks(&self.transaction_blocks[0..amount], None)
     }
 
     pub fn add_serialized_transaction_block(
