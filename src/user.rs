@@ -41,7 +41,7 @@ impl User {
                 ));
             }
         }
-        return Ok(true);
+        Ok(true)
     }
     pub fn take(&mut self, value: TransactionValue) -> Result<bool, String> {
         if value.is_coin_transfer()? {
@@ -63,7 +63,7 @@ impl User {
             }
         }
         self.current_uid.increment();
-        return Ok(true);
+        Ok(true)
     }
 }
 

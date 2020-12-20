@@ -1,7 +1,7 @@
 use crate::{serialize::Serialize, universal_id::UniversalId, user::User};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fmt, fs::File, io::prelude::*, path::PathBuf};
+use std::{cmp::Ordering, collections::HashMap, fmt, fs::File, io::prelude::*, path::PathBuf};
 
 #[derive(Copy, Clone)]
 pub struct TransactionValue {
@@ -11,10 +11,7 @@ pub struct TransactionValue {
 
 impl TransactionValue {
     pub fn new(value: i32, fee: Option<u8>) -> TransactionValue {
-        TransactionValue {
-            value: value,
-            fee: fee,
-        }
+        TransactionValue { value, fee }
     }
 
     pub fn is_coin_transfer(&self) -> Result<bool, String> {
@@ -49,7 +46,7 @@ impl TransactionValue {
     }
     pub fn get_id(self) -> Result<u32, String> {
         if !self.is_coin_transfer()? {
-            return Ok((self.value * -1) as u32);
+            return Ok(self.value as u32);
         };
         Err(String::from("Transaction not ID transfer"))
     }
@@ -83,7 +80,7 @@ impl Serialize for TransactionValue {
         let mut tmp_fee = None;
         if tmp_val >= 0 {
             tmp_fee = Some((tmp_val & 0xff) as u8);
-            tmp_val = tmp_val >> 8;
+            tmp_val >>= 8;
         }
         let transaction_value = TransactionValue {
             value: tmp_val,
@@ -92,7 +89,7 @@ impl Serialize for TransactionValue {
         *i += transaction_value.serialized_len()?;
         Ok(Box::new(transaction_value))
     }
-    fn serialize_into(&mut self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let mut tmp_val = self.value;
         if tmp_val >= 0 {
             tmp_val = (tmp_val << 8) + (self.get_fee()? as i32);
@@ -102,7 +99,7 @@ impl Serialize for TransactionValue {
         buffer[*i + 2] = (tmp_val >> 8) as u8;
         buffer[*i + 3] = tmp_val as u8;
         *i += 4;
-        return Ok(4);
+        Ok(4)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
@@ -125,7 +122,7 @@ impl Serialize for PublicKey {
         match PublicKey::from_slice(&data[*i..*i + 33]) {
             Ok(public_key) => {
                 *i += public_key.serialized_len()?;
-                return Ok(Box::new(public_key));
+                Ok(Box::new(public_key))
             }
             Err(e) => Err(format!(
                 "Could not deserialize public key {:x?}: {}",
@@ -135,11 +132,11 @@ impl Serialize for PublicKey {
         }
     }
 
-    fn serialize_into(&mut self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let self_bytes = self.serialize();
         buffer[*i..*i + self_bytes.len()].copy_from_slice(&self_bytes);
         *i += self_bytes.len();
-        return Ok(self_bytes.len());
+        Ok(self_bytes.len())
     }
     fn serialized_len(&self) -> Result<usize, String> {
         Ok(self.serialize().len())
@@ -155,7 +152,7 @@ impl Serialize for SecretKey {
         match SecretKey::from_slice(secret_key) {
             Ok(secret_key) => {
                 *i += secret_key.len();
-                return Ok(Box::new(secret_key));
+                Ok(Box::new(secret_key))
             }
             Err(e) => Err(format!(
                 "Could not deserialize secret key {:?}: {}",
@@ -165,11 +162,11 @@ impl Serialize for SecretKey {
         }
     }
 
-    fn serialize_into(&mut self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let self_bytes = self.as_ref();
         buffer.copy_from_slice(self_bytes);
         *i += self_bytes.len();
-        return Ok(self_bytes.len());
+        Ok(self_bytes.len())
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
@@ -191,10 +188,10 @@ impl Transaction {
         value: TransactionValue,
     ) -> Transaction {
         Transaction {
-            uid: uid,
-            from_pk: from_pk,
-            to_pk: to_pk,
-            value: value,
+            uid,
+            from_pk,
+            to_pk,
+            value,
         }
     }
 }
@@ -209,29 +206,27 @@ impl Serialize for Transaction {
         let from_pk = *PublicKey::from_serialized(&data, i, users)?;
         let to_pk = *PublicKey::from_serialized(&data, i, users)?;
         let value = *TransactionValue::from_serialized(&data, i, users)?;
-        let from_user = users.entry(from_pk).or_insert(User::new(from_pk));
+        users.entry(from_pk).or_insert_with(|| User::new(from_pk));
+        let from_user = users.get_mut(&from_pk).unwrap();
         from_user.take(value)?;
-        let to_user = users.entry(to_pk).or_insert(User::new(to_pk));
+        users.entry(to_pk).or_insert_with(|| User::new(to_pk));
+        let to_user = users.get_mut(&to_pk).unwrap();
         to_user.give(value)?;
-        return Ok(Box::new(Transaction::new(
+        Ok(Box::new(Transaction::new(
             universal_id,
             from_pk,
             to_pk,
             value,
-        )));
+        )))
     }
 
-    fn serialize_into(
-        &mut self,
-        mut buffer: &mut [u8],
-        mut i: &mut usize,
-    ) -> Result<usize, String> {
+    fn serialize_into(&self, mut buffer: &mut [u8], mut i: &mut usize) -> Result<usize, String> {
         let start_i = *i;
         self.uid.serialize_into(&mut buffer, i)?;
         self.from_pk.serialize_into(&mut buffer, &mut i)?;
         self.to_pk.serialize_into(&mut buffer, &mut i)?;
         self.value.serialize_into(&mut buffer, &mut i)?;
-        return Ok(*i - start_i);
+        Ok(*i - start_i)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
@@ -252,8 +247,8 @@ pub struct TransactionBlock {
 impl TransactionBlock {
     pub fn new(transactions: Vec<Transaction>, expected_signatures: usize) -> TransactionBlock {
         TransactionBlock {
-            transactions: transactions,
-            expected_signatures: expected_signatures,
+            transactions,
+            expected_signatures,
             signatures: Vec::new(),
         }
     }
@@ -271,12 +266,12 @@ impl TransactionBlock {
                 }
             }
         }
-        return Ok(tmp_value);
+        Ok(tmp_value)
     }
 
-    pub fn len(&self) -> usize {
-        return self.transactions.len() * 188 + self.signatures.len() * 72;
-    }
+    // pub fn len(&self) -> usize {
+    //     self.transactions.len() * 188 + self.signatures.len() * 72
+    // }
 
     pub fn sign(&mut self, sk: SecretKey) {
         let secp = Secp256k1::new();
@@ -296,7 +291,7 @@ impl TransactionBlock {
     }
 
     fn serialize_content(&mut self) -> Result<Vec<u8>, String> {
-        if self.transactions.len() > 0 {
+        if !self.transactions.is_empty() {
             let mut return_buffer =
                 vec![0; self.transactions.len() * self.transactions[0].serialized_len()?];
             let mut i = 0;
@@ -305,7 +300,43 @@ impl TransactionBlock {
             }
             return Ok(return_buffer);
         }
-        return Ok(Vec::new());
+        Ok(Vec::new())
+    }
+
+    fn total_fee(&self) -> usize {
+        let mut total_fee = 0;
+        for transaction in self.transactions.iter() {
+            if transaction.value.is_coin_transfer().is_ok()
+                && transaction.value.is_coin_transfer().unwrap()
+            {
+                if let Ok(ref fee) = transaction.value.get_fee() {
+                    total_fee += *fee as usize;
+                }
+            }
+        }
+        total_fee
+    }
+}
+
+impl Ord for TransactionBlock {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.total_fee().cmp(&other.total_fee())
+    }
+}
+
+impl Eq for TransactionBlock {
+    fn assert_receiver_is_total_eq(&self) {}
+}
+
+impl PartialOrd for TransactionBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for TransactionBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.total_fee() == other.total_fee()
     }
 }
 
@@ -344,13 +375,13 @@ impl Serialize for TransactionBlock {
             }
         }
         Ok(Box::new(TransactionBlock {
-            transactions: transactions,
+            transactions,
             expected_signatures: seen_pks.len(),
             signatures: tmp_signatures,
         }))
     }
 
-    fn serialize_into(&mut self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         if self.expected_signatures != self.signatures.len() {
             return Err(format!(
                 "Wrong amount of signatures; expected {} got {}",
@@ -360,7 +391,7 @@ impl Serialize for TransactionBlock {
         }
         let content_start = *i;
         let mut seen_pks: Vec<PublicKey> = Vec::new();
-        for transaction in self.transactions.iter_mut() {
+        for transaction in self.transactions.iter() {
             transaction.serialize_into(buffer, i)?;
             if !seen_pks.contains(&transaction.from_pk) {
                 seen_pks.push(transaction.from_pk);
@@ -394,7 +425,7 @@ impl Serialize for TransactionBlock {
             }
             Err(e) => return Err(format!("Could not generate message from bytes: {}", e)),
         }
-        return Ok(*i - content_start);
+        Ok(*i - content_start)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
@@ -405,6 +436,6 @@ impl Serialize for TransactionBlock {
         for signature in self.signatures.iter() {
             tmp_len += signature.serialize_compact().len();
         }
-        return Ok(tmp_len);
+        Ok(tmp_len)
     }
 }

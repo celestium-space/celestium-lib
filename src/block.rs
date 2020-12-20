@@ -1,33 +1,34 @@
 use crate::{
-    serialize::Serialize, transaction::TransactionBlock, universal_id::UniversalId, user::User,
+    magic::Magic, serialize::Serialize, transaction::TransactionBlock, universal_id::UniversalId,
+    user::User,
 };
 use secp256k1::PublicKey;
 use std::{collections::HashMap, fmt};
 
 pub struct BlockHash {
-    value: u32,
+    value: [u8; 32],
 }
 
 impl BlockHash {
-    pub fn new(value: u32) -> BlockHash {
-        BlockHash { value: value }
-    }
-
-    pub fn from_hash(data: Vec<u8>) -> BlockHash {
-        BlockHash {
-            value: ((data[0] as u32) << 24)
-                + ((data[1] as u32) << 16)
-                + ((data[2] as u32) << 8)
-                + (data[3] as u32),
-        }
+    pub fn new_unworked() -> BlockHash {
+        BlockHash { value: [0xff; 32] }
     }
 
     pub fn contains_enough_work(&self) -> bool {
-        true
+        if self.value[0] == 0 && self.value[1] == 0 && self.value[2] == 0 {
+            return true;
+        }
+        false
     }
 
     pub fn is_zero_block(&self) -> bool {
-        self.value == 0
+        self.value == [0; 32]
+    }
+}
+
+impl Default for BlockHash {
+    fn default() -> Self {
+        BlockHash { value: [0; 32] }
     }
 }
 
@@ -39,7 +40,7 @@ impl PartialEq for BlockHash {
 
 impl fmt::Display for BlockHash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "0x{:x}", self.value)
+        write!(f, "{:x?}", self.value)
     }
 }
 
@@ -49,27 +50,26 @@ impl Serialize for BlockHash {
         i: &mut usize,
         _: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<BlockHash>, String> {
-        let block_hash = BlockHash {
-            value: ((data[*i] as u32) << 24)
-                + ((data[*i + 1] as u32) << 16)
-                + ((data[*i + 2] as u32) << 8)
-                + (data[*i + 3] as u32),
+        if data.len() - *i < 32 {
+            return Err(format!(
+                "Cannot deserialize hash, expected buffer with least 32 bytes left got {}",
+                data.len() + *i
+            ));
         };
-        *i += block_hash.serialized_len()?;
-        Ok(Box::new(block_hash))
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&data[*i..*i + 32]);
+        *i += 32;
+        Ok(Box::new(BlockHash { value: hash }))
     }
 
-    fn serialize_into(&mut self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        buffer[*i + 0] = (self.value >> 24) as u8;
-        buffer[*i + 1] = (self.value >> 16) as u8;
-        buffer[*i + 2] = (self.value >> 8) as u8;
-        buffer[*i + 3] = self.value as u8;
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        buffer[*i..*i + 32].copy_from_slice(&self.value);
         *i += self.serialized_len()?;
-        return Ok(self.serialized_len()?);
+        Ok(self.serialized_len()?)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
-        return Ok(4);
+        Ok(32)
     }
 }
 
@@ -78,7 +78,7 @@ pub struct Block {
     uid: UniversalId,
     pub back_hash: BlockHash,
     pub finder: PublicKey,
-    pub magic: Vec<u8>,
+    pub magic: Magic,
 }
 
 impl Block {
@@ -87,7 +87,7 @@ impl Block {
         uid: UniversalId,
         back_hash: BlockHash,
         finder: PublicKey,
-        magic: Vec<u8>,
+        magic: Magic,
     ) -> Block {
         Block {
             transaction_blocks: transactions,
@@ -103,7 +103,7 @@ impl Block {
         for transaction_block in self.transaction_blocks.iter_mut() {
             tmp_value += transaction_block.get_user_value_change(pk)?;
         }
-        return Ok(tmp_value);
+        Ok(tmp_value)
     }
 }
 
@@ -127,46 +127,41 @@ impl Serialize for Block {
         }
         *i += uid.serialized_len()?;
         let back_hash = *BlockHash::from_serialized(&data, &mut i, users)?;
-        if transaction_blocks.len() > 0 && back_hash.is_zero_block() {
+        if !transaction_blocks.is_empty() && back_hash.is_zero_block() {
             let zero_block_owner = transaction_blocks[0].transactions[0].to_pk;
             for transaction_block in transaction_blocks.iter() {
                 for transaction in transaction_block.transactions.iter() {
                     if transaction.to_pk == zero_block_owner {
                         users
                             .entry(zero_block_owner)
-                            .or_insert(User::new(zero_block_owner))
+                            .or_insert_with(|| User::new(zero_block_owner))
                             .give(transaction.value)?;
                     }
                 }
             }
         }
         let finder = *PublicKey::from_serialized(&data, &mut i, users)?;
-        let magic_len = uid.get_value();
-        let magic = data[*i..*i + magic_len as usize].to_vec();
-        *i += magic_len as usize;
-        return Ok(Box::new(Block::new(
+        let magic = *Magic::from_serialized(&data, &mut i, users)?;
+        Ok(Box::new(Block::new(
             transaction_blocks,
             uid,
             back_hash,
             finder,
             magic,
-        )));
+        )))
     }
 
-    fn serialize_into(&mut self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let start_i = *i;
-        for transaction_block in self.transaction_blocks.iter_mut() {
+        for transaction_block in self.transaction_blocks.iter() {
             transaction_block.serialize_into(data, i)?;
         }
-        let uid = &mut UniversalId::new(false, true, self.magic.len() as u16);
+        let uid = &mut UniversalId::new(false, true, self.magic.serialized_len()? as u16);
         uid.serialize_into(data, i)?;
         self.back_hash.serialize_into(data, i)?;
         self.finder.serialize_into(data, i)?;
-        for j in 0..uid.get_value() as usize {
-            data[*i + j] = self.magic[j];
-        }
-        *i += uid.get_value() as usize;
-        return Ok(*i - start_i);
+        self.magic.serialize_into(data, i)?;
+        Ok(*i - start_i)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
@@ -176,10 +171,9 @@ impl Serialize for Block {
         }
         let len = tmp_len
             + self.uid.serialized_len()?
-            + 1
-            + 4
+            + self.back_hash.serialized_len()?
             + self.finder.serialized_len()?
-            + self.magic.len();
-        return Ok(len);
+            + self.magic.serialized_len()?;
+        Ok(len)
     }
 }

@@ -1,5 +1,6 @@
 use crate::{
     block::{Block, BlockHash},
+    magic::Magic,
     serialize::Serialize,
     transaction::{TransactionBlock, TransactionValue},
     universal_id::UniversalId,
@@ -8,8 +9,6 @@ use crate::{
 use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-
-const MAX_TRANSACTION_SIZE: usize = 200;
 
 pub struct Blockchain {
     blocks: Vec<Block>,
@@ -22,21 +21,25 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub fn new(blocks: Vec<Block>, users: HashMap<PublicKey, User>) -> Blockchain {
-        Blockchain {
-            blocks: blocks,
-            users: users,
+        Blockchain { blocks, users }
+    }
+
+    pub fn get_user_uid(&self, pk: PublicKey) -> Result<UniversalId, String> {
+        match self.users.get(&pk) {
+            Some(u) => Ok(u.get_uid()),
+            None => Err(format!("No user with public key: {}", pk)),
         }
     }
 
-    pub fn get_user_value_change(&mut self, pk: &mut PublicKey) -> Result<u32, String> {
-        match self.users.get(pk) {
+    pub fn count_users(&self) -> usize {
+        self.users.len()
+    }
+
+    pub fn get_user_value_change(&self, pk: PublicKey) -> Result<u32, String> {
+        match self.users.get(&pk) {
             Some(user) => Ok(user.get_balance()),
             None => Err(format!("No user with public key {}", pk)),
         }
-    }
-
-    pub fn get_users(self) -> Result<HashMap<PublicKey, User>, String> {
-        return Ok(self.users);
     }
 
     pub fn from_binary(data: &[u8]) -> Result<Box<Blockchain>, String> {
@@ -59,23 +62,22 @@ impl Blockchain {
         mut i: &mut usize,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Vec<Block>, String> {
-        let mut hash = BlockHash::new(0);
+        let mut hash = BlockHash::default();
         let mut tmp_blocks = Vec::new();
         while *i < data.len() {
             let block = *Block::from_serialized(&data, &mut i, users)?;
             if block.back_hash == hash {
                 let block_len = block.serialized_len()?;
-                let mut j = 0;
                 hash = *BlockHash::from_serialized(
-                    Sha256::digest(&data[*i - (block_len - 1)..*i]).as_slice(),
-                    &mut j,
+                    Sha256::digest(&data[*i - block_len..*i]).as_slice(),
+                    &mut 0,
                     users,
                 )?;
                 let valid_hash = hash.contains_enough_work();
                 if !valid_hash {
                     return Err(format!(
-                        "Block {} with magic {:x?} does not represent enough work",
-                        i, block.magic
+                        "Block at byte {} with magic {}, hashes to {}, which does not represent enough work",
+                        i, block.magic, hash
                     ));
                 }
                 tmp_blocks.push(block);
@@ -86,38 +88,61 @@ impl Blockchain {
                 ));
             }
         }
-        return Ok(tmp_blocks);
+        Ok(tmp_blocks)
     }
 
     pub fn create_unmined_block(
-        mut self,
-        transaction_blocks: Vec<TransactionBlock>,
+        &self,
+        transaction_blocks: &[TransactionBlock],
         finder_pk: PublicKey,
     ) -> Result<Vec<u8>, String> {
-        let mut unmined_block = vec![0; transaction_blocks.len() * MAX_TRANSACTION_SIZE];
+        let mut transaction_blocks_len = 0;
+        for transaction_block in transaction_blocks.iter() {
+            transaction_blocks_len += transaction_block.serialized_len()?;
+        }
         let uid = UniversalId::new(false, true, 8);
-        let mut last_block_serialized = vec![0; self.blocks.last().unwrap().serialized_len()?];
+        let back_hash;
+        if !self.blocks.is_empty() {
+            let mut last_block_serialized = vec![0; self.blocks.last().unwrap().serialized_len()?];
+            let mut i = 0;
+            self.blocks
+                .last()
+                .unwrap()
+                .serialize_into(&mut last_block_serialized, &mut i)?;
+            back_hash = BlockHash::from_serialized(
+                &Sha256::digest(&last_block_serialized[..i]),
+                &mut 0,
+                &mut HashMap::new(),
+            )?;
+        } else {
+            back_hash = Box::new(BlockHash::default());
+        }
+        let magic = Magic::new(0);
+        let mut unmined_block = vec![
+            0;
+            transaction_blocks_len
+                + uid.serialized_len()?
+                + back_hash.serialized_len()?
+                + finder_pk.serialized_len()?
+                + magic.serialized_len()?
+        ];
         let mut i = 0;
-        self.blocks
-            .last_mut()
-            .unwrap()
-            .serialize_into(&mut last_block_serialized, &mut i)?;
-        let back_hash = BlockHash::from_serialized(
-            &Sha256::digest(&last_block_serialized[..i]),
-            &mut i,
-            &mut HashMap::new(),
-        )?;
-        let mut i = 0;
-        let magic_len = uid.get_value() as usize;
-        Block::new(transaction_blocks, uid, *back_hash, finder_pk, vec![0])
-            .serialize_into(&mut unmined_block, &mut i)?;
-        return Ok(unmined_block[0..i - magic_len].to_vec());
+        for transaction_block in transaction_blocks.iter() {
+            transaction_block.serialize_into(&mut unmined_block, &mut i)?;
+        }
+        uid.serialize_into(&mut unmined_block, &mut i)?;
+        back_hash.serialize_into(&mut unmined_block, &mut i)?;
+        finder_pk.serialize_into(&mut unmined_block, &mut i)?;
+        magic.serialize_into(&mut unmined_block, &mut i)?;
+        Ok(unmined_block.to_vec())
     }
 
-    pub fn add_serialized_block(mut self, block: Vec<u8>) -> Result<bool, String> {
+    pub fn add_serialized_block(&mut self, block: Vec<u8>) -> Result<Vec<u8>, String> {
         let block = *Block::from_serialized(&block, &mut 0, &mut self.users)?;
         self.blocks.push(block);
-        Ok(true)
+        let mut buffer = vec![0u8; self.serialized_len()?];
+        self.serialize_into(&mut buffer, &mut 0)?;
+        Ok(buffer)
     }
 }
 
@@ -130,10 +155,10 @@ impl Serialize for Blockchain {
         todo!();
     }
 
-    fn serialize_into(&mut self, data: &mut [u8], mut i: &mut usize) -> Result<usize, String> {
-        let mut hash = BlockHash::new(0);
+    fn serialize_into(&self, data: &mut [u8], mut i: &mut usize) -> Result<usize, String> {
+        let mut hash = BlockHash::default();
         let orig_i = *i;
-        for block in self.blocks.iter_mut() {
+        for block in self.blocks.iter() {
             if block.back_hash != hash {
                 return Err(format!(
                     "Block at index {} in chain has wrong back hash. Expected {} got {}",
@@ -142,14 +167,13 @@ impl Serialize for Blockchain {
             }
             let pre_i = *i;
             block.serialize_into(data, &mut i)?;
-            let mut j = 0;
             hash = *BlockHash::from_serialized(
                 &Sha256::digest(&data[pre_i..*i]),
-                &mut j,
+                &mut 0,
                 &mut HashMap::new(),
             )?;
         }
-        return Ok(*i - orig_i);
+        Ok(*i - orig_i)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
@@ -157,6 +181,6 @@ impl Serialize for Blockchain {
         for block in &self.blocks {
             tmp_len += block.serialized_len()?;
         }
-        return Ok(tmp_len);
+        Ok(tmp_len)
     }
 }

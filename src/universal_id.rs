@@ -12,9 +12,9 @@ pub struct UniversalId {
 impl UniversalId {
     pub fn new(is_continuation: bool, is_magic: bool, value: u16) -> UniversalId {
         UniversalId {
-            is_continuation: is_continuation,
-            is_magic: is_magic,
-            value: value,
+            is_continuation,
+            is_magic,
+            value,
         }
     }
 
@@ -53,9 +53,9 @@ impl Serialize for UniversalId {
             value: (((data[*i] & 0x3f) as u16) << 8) + data[*i + 1] as u16,
         };
         *i += 2;
-        return Ok(Box::new(uid));
+        Ok(Box::new(uid))
     }
-    fn serialize_into(&mut self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let mut first_byte = (self.value >> 8) as u8;
         if self.is_continuation {
             first_byte ^= 0x80;
@@ -66,7 +66,7 @@ impl Serialize for UniversalId {
         buffer[*i] = first_byte;
         buffer[*i + 1] = (self.value & 0xff) as u8;
         *i += 2;
-        return Ok(2);
+        Ok(2)
     }
 
     fn serialized_len(&self) -> Result<usize, String> {
