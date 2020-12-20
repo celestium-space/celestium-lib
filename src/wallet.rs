@@ -6,14 +6,11 @@ use crate::{
     transaction::{Transaction, TransactionBlock, TransactionValue},
     universal_id::UniversalId,
 };
+use crossterm::terminal;
+use rayon::prelude::*;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fs::File, io::Read, path::PathBuf, sync::mpsc::channel, thread};
-use workerpool::{
-    thunk::{Thunk, ThunkWorker},
-    Pool,
-};
-
+use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 pub struct Wallet {
     blockchain: Blockchain,
     current_uid: UniversalId,
@@ -21,6 +18,9 @@ pub struct Wallet {
     sk: Option<SecretKey>,
     transaction_blocks: Vec<TransactionBlock>,
 }
+
+const N_PAR_WORKERS: u32 = 32;
+const PAR_WORK: u32 = 10000;
 
 impl Wallet {
     pub fn new(
@@ -100,48 +100,44 @@ impl Wallet {
             .create_unmined_block(transaction_blocks, self.pk.unwrap())?;
         let mut magic_with_enough_work = None;
 
-        let n_workers = 32;
-        let work = 10000;
-        let pool = Pool::<ThunkWorker<Option<Magic>>>::new(n_workers);
-
-        let (tx, rx) = channel();
-
         let mut i = 0;
+        println!("0.000% of all magic tested");
         while magic_with_enough_work.is_none() {
-            for _ in 0..n_workers {
+            let list: Vec<u32> = (0..N_PAR_WORKERS).collect();
+            let slice = list.as_slice();
+            let magic = slice.par_iter().filter_map(|&j| {
                 let mut my_unmined_block = vec![0; unmined_block.len()];
                 my_unmined_block.copy_from_slice(&unmined_block);
-                pool.execute_to(
-                    tx.clone(),
-                    Thunk::of(move || {
-                        let total_len = my_unmined_block.len();
-                        let mut magic = Magic::new(i);
-                        for _ in i..i + work {
-                            let magic_len = magic.serialized_len().unwrap();
-                            magic
-                                .serialize_into(&mut my_unmined_block, &mut (total_len - magic_len))
-                                .unwrap();
-                            let hash = *BlockHash::from_serialized(
-                                Sha256::digest(&my_unmined_block).as_slice(),
-                                &mut 0,
-                                &mut HashMap::new(),
-                            )
-                            .unwrap();
-                            if hash.contains_enough_work() {
-                                return Some(magic);
-                            }
-                            magic.increase();
-                        }
-                        None
-                    }),
-                );
-                i += work;
-            }
-            for magic in rx.iter().take(n_workers) {
-                if magic.is_some() {
-                    magic_with_enough_work = magic;
+                let total_len = my_unmined_block.len();
+                let mut magic = Magic::new(i + j * PAR_WORK);
+                for _ in 0..PAR_WORK {
+                    let magic_len = magic.serialized_len().unwrap();
+                    magic
+                        .serialize_into(&mut my_unmined_block, &mut (total_len - magic_len))
+                        .unwrap();
+                    let hash = *BlockHash::from_serialized(
+                        Sha256::digest(&my_unmined_block).as_slice(),
+                        &mut 0,
+                        &mut HashMap::new(),
+                    )
+                    .unwrap();
+                    if hash.contains_enough_work() {
+                        return Some(magic);
+                    }
+                    magic.increase();
                 }
+                None
+            });
+            let best_magic = magic.min();
+            if best_magic.is_some() {
+                magic_with_enough_work = best_magic;
+            } else {
+                println!(
+                    "{0:.3}% of all magic tested",
+                    (i as f64 / u32::MAX as f64) * 100f64
+                );
             }
+            i += PAR_WORK * N_PAR_WORKERS;
         }
         let magic = magic_with_enough_work.unwrap();
         let mut i = unmined_block.len() - magic.serialized_len()?;
