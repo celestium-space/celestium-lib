@@ -6,10 +6,19 @@ use crate::{
     transaction::{Transaction, TransactionBlock, TransactionValue},
     universal_id::UniversalId,
 };
-use rayon::prelude::*;
+use crossbeam::thread;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::File,
+    future::{Future, Pending, Ready},
+    io::Read,
+    ops::Range,
+    path::PathBuf,
+    task::{Context, Poll},
+};
+use thread::ScopedJoinHandle;
 pub struct Wallet {
     blockchain: Blockchain,
     current_uid: UniversalId,
@@ -90,80 +99,154 @@ impl Wallet {
         self.transaction_blocks.len()
     }
 
-    pub fn mine_transaction_blocks(
-        &self,
-        transaction_blocks: &[TransactionBlock],
-        range: Option<(u32, u32)>,
-    ) -> Result<Vec<u8>, String> {
-        let mut unmined_block = self
-            .blockchain
-            .create_unmined_block(transaction_blocks, self.pk.unwrap())?;
-
-        let mut magic_with_enough_work = None;
-        let (mut i, end_i) = match range {
-            Some(r) => (r.0, r.1),
-            None => (0, u32::MAX),
-        };
-        let mut latest_print = 0.1;
-        let print_scale = 0.1;
-        while magic_with_enough_work.is_none() {
-            let list: Vec<u32> = (0..N_PAR_WORKERS).collect();
-            let slice = list.as_slice();
-            let magic = slice.par_iter().filter_map(|&j| {
-                let mut my_unmined_block = vec![0; unmined_block.len()];
-                my_unmined_block.copy_from_slice(&unmined_block);
-                let total_len = my_unmined_block.len();
-                let mut magic = Magic::new(i + j * PAR_WORK);
-                for _ in 0..PAR_WORK {
-                    let magic_len = magic.serialized_len().unwrap();
-                    magic
-                        .serialize_into(&mut my_unmined_block, &mut (total_len - magic_len))
-                        .unwrap();
-                    let hash = *BlockHash::from_serialized(
-                        Sha256::digest(&my_unmined_block).as_slice(),
-                        &mut 0,
-                        &mut HashMap::new(),
-                    )
-                    .unwrap();
-                    if hash.contains_enough_work() {
-                        return Some(magic);
-                    }
-                    magic.increase();
-                }
-                None
-            });
-            let best_magic = magic.min();
-            if best_magic.is_some() {
-                magic_with_enough_work = best_magic;
-            } else if ((i as f64 / end_i as f64) * 100f64) > latest_print + print_scale {
-                latest_print += print_scale;
-                println!("{0:.1}% mined", latest_print);
-            }
-            i += PAR_WORK * N_PAR_WORKERS;
-            if i > end_i {
-                break;
-            }
-        }
-        let magic = magic_with_enough_work.unwrap();
-        let mut i = unmined_block.len() - magic.serialized_len()?;
-        magic.serialize_into(&mut unmined_block, &mut i)?;
-        Ok(unmined_block)
-    }
-
-    pub fn mine_most_valueable_transaction_blocks(
+    pub fn create_unmined_block_from_most_valueable_transactions(
         &mut self,
         amount: usize,
     ) -> Result<Vec<u8>, String> {
-        if self.transaction_blocks.len() < amount {
-            return Err(format!(
-                "More transaction blocks selected than available, selected {} expected <= {}",
-                amount,
-                self.transaction_blocks.len()
-            ));
-        };
-        self.transaction_blocks.sort();
-        self.mine_transaction_blocks(&self.transaction_blocks[0..amount], None)
+        match self.pk {
+            Some(pk) => {
+                if self.transaction_blocks.len() < amount {
+                    return Err(format!(
+                        "More transaction blocks selected than available, selected {} expected <= {}",
+                        amount,
+                        self.transaction_blocks.len()
+                    ));
+                };
+                self.transaction_blocks.sort();
+                self.blockchain
+                    .create_unmined_block(&self.transaction_blocks[0..amount], pk)
+            }
+            None => Err(
+                "Wallet must have a public key to create unmined blocks (for finders fee)"
+                    .to_string(),
+            ),
+        }
     }
+
+    pub fn count_transaction_fees(&self) -> Result<usize, String> {
+        let mut total = 0usize;
+        for transaction_block in self.transaction_blocks.iter() {
+            for transaciton in transaction_block.transactions.iter() {
+                if transaciton.value.is_coin_transfer()? {
+                    total += transaciton.value.get_fee()? as usize;
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    // pub fn start_mining_thread<'a>(
+    //     serialized_block: &'a [u8],
+    //     range: Option<(usize, usize)>,
+    // ) -> ScopedJoinHandle<'a, Option<Magic>> {
+    //     let (mut start, end) = match range {
+    //         Some(r) => (r.0, r.1),
+    //         None => (0usize, usize::MAX),
+    //     };
+    //     let block_len = serialized_block.len();
+    //     let magic_byte_count = 1usize;
+    //     let my_serialized_block = vec![0u8; block_len + magic_byte_count];
+    //     my_serialized_block[..my_serialized_block.len() - 1].copy_from_slice(serialized_block);
+    //     let mut magic = Magic::new(start as u64, 1);
+    //     let i = start;
+    //     while i < end || variable {
+    //         magic
+    //             .serialize_into(
+    //                 &mut my_serialized_block,
+    //                 &mut (block_len - magic_byte_count),
+    //             )
+    //             .unwrap();
+    //         let hash = *BlockHash::from_serialized(
+    //             Sha256::digest(&my_serialized_block).as_slice(),
+    //             &mut 0,
+    //             &mut HashMap::new(),
+    //         )
+    //         .unwrap();
+    //         if hash.contains_enough_work() {
+    //             return Some(magic);
+    //         }
+    //         magic.increase();
+    //         if variable {
+    //             return i;
+    //         }
+    //     }
+    //     None
+    // }
+
+    // pub fn mine_transaction_blocks(
+    //     &self,
+    //     transaction_blocks: &[TransactionBlock],
+    //     range: Option<(u32, u32)>,
+    // ) -> Result<Vec<u8>, String> {
+    //     let mut unmined_block = self
+    //         .blockchain
+    //         .create_unmined_block(transaction_blocks, self.pk.unwrap())?;
+
+    //     let mut magic_with_enough_work = None;
+    //     let (mut i, end_i) = match range {
+    //         Some(r) => (r.0, r.1),
+    //         None => (0, u32::MAX),
+    //     };
+    //     let mut latest_print = 0.1;
+    //     let print_scale = 0.1;
+    //     while magic_with_enough_work.is_none() {
+    //         let list: Vec<u32> = (0..N_PAR_WORKERS).collect();
+    //         let slice = list.as_slice();
+    //         let magic = slice.par_iter().filter_map(|&j| {
+    //             let mut my_unmined_block = vec![0; unmined_block.len()];
+    //             my_unmined_block.copy_from_slice(&unmined_block);
+    //             let total_len = my_unmined_block.len();
+    //             let mut magic = Magic::new(i + j * PAR_WORK);
+    //             for _ in 0..PAR_WORK {
+    //                 let magic_len = magic.serialized_len().unwrap();
+    //                 magic
+    //                     .serialize_into(&mut my_unmined_block, &mut (total_len - magic_len))
+    //                     .unwrap();
+    //                 let hash = *BlockHash::from_serialized(
+    //                     Sha256::digest(&my_unmined_block).as_slice(),
+    //                     &mut 0,
+    //                     &mut HashMap::new(),
+    //                 )
+    //                 .unwrap();
+    //                 if hash.contains_enough_work() {
+    //                     return Some(magic);
+    //                 }
+    //                 magic.increase();
+    //             }
+    //             None
+    //         });
+    //         let best_magic = magic.min();
+    //         if best_magic.is_some() {
+    //             magic_with_enough_work = best_magic;
+    //         } else if ((i as f64 / end_i as f64) * 100f64) > latest_print + print_scale {
+    //             latest_print += print_scale;
+    //             println!("{0:.1}% mined", latest_print);
+    //         }
+    //         i += PAR_WORK * N_PAR_WORKERS;
+    //         if i > end_i {
+    //             break;
+    //         }
+    //     }
+    //     let magic = magic_with_enough_work.unwrap();
+    //     let mut i = unmined_block.len() - magic.serialized_len()?;
+    //     magic.serialize_into(&mut unmined_block, &mut i)?;
+    //     Ok(unmined_block)
+    // }
+
+    // pub fn mine_most_valueable_transaction_blocks(
+    //     &mut self,
+    //     amount: usize,
+    // ) -> Result<Vec<u8>, String> {
+    //     if self.transaction_blocks.len() < amount {
+    //         return Err(format!(
+    //             "More transaction blocks selected than available, selected {} expected <= {}",
+    //             amount,
+    //             self.transaction_blocks.len()
+    //         ));
+    //     };
+    //     self.transaction_blocks.sort();
+    //     self.mine_transaction_blocks(&self.transaction_blocks[0..amount], None)
+    // }
 
     pub fn add_serialized_transaction_block(
         mut self,
@@ -233,4 +316,57 @@ impl Wallet {
             &mut HashMap::new(),
         )?)
     }
+}
+
+struct Miner {
+    my_serialized_block: Vec<u8>,
+    i: u64,
+    end: u64,
+    current_magic: Magic,
+}
+
+impl Miner {
+    pub fn new(serialized_block: Vec<u8>) -> Self {
+        Miner::new_ranged(serialized_block, 0u64..u64::MAX)
+    }
+
+    pub fn new_ranged(serialized_block: Vec<u8>, range: Range<u64>) -> Self {
+        let block_len = serialized_block.len();
+        let magic_byte_count = 1usize;
+        let my_serialized_block = vec![0u8; block_len + magic_byte_count];
+        my_serialized_block[..my_serialized_block.len() - 1].copy_from_slice(&serialized_block);
+        let mut magic = Magic::new(range.start as u64, 1);
+        Miner {
+            my_serialized_block,
+            i: range.start,
+            end: range.end,
+            current_magic: magic,
+        }
+    }
+}
+
+impl Future for Miner {
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Vec<u8>> {
+        self.current_magic.increase();
+        let magic_byte_count = self.current_magic.serialized_len().unwrap();
+        let block_len = self.my_serialized_block.len();
+        self.current_magic
+            .serialize_into(
+                &mut self.my_serialized_block,
+                &mut (block_len - magic_byte_count),
+            )
+            .unwrap();
+        let hash = *BlockHash::from_serialized(
+            Sha256::digest(&self.my_serialized_block).as_slice(),
+            &mut 0,
+            &mut HashMap::new(),
+        )
+        .unwrap();
+        if hash.contains_enough_work() {
+            return Ready(self.my_serialized_block.to_vec());
+        }
+        Pending
+    }
+
+    type Output = Magic;
 }
