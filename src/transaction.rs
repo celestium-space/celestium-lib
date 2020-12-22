@@ -1,178 +1,11 @@
-use crate::{serialize::Serialize, universal_id::UniversalId, user::User};
+use crate::{
+    serialize::Serialize, transaction_value::TransactionValue, universal_id::UniversalId,
+    user::User,
+};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
 use sha2::{Digest, Sha256};
-use std::{cmp::Ordering, collections::HashMap, fmt, fs::File, io::prelude::*, path::PathBuf};
+use std::{cmp::Ordering, collections::HashMap, fs::File, io::prelude::*, path::PathBuf};
 
-#[derive(Copy, Clone)]
-pub struct TransactionValue {
-    value: i32,
-    fee: Option<u8>,
-}
-
-impl TransactionValue {
-    pub fn new(value: i32, fee: Option<u8>) -> TransactionValue {
-        TransactionValue { value, fee }
-    }
-
-    pub fn is_coin_transfer(&self) -> Result<bool, String> {
-        if self.value >= 0 {
-            match self.fee {
-                Some(_) => Ok(true),
-                None => Err(String::from("Undefined fee for coin transfer")),
-            }
-        } else {
-            match self.fee {
-                Some(_) => Err(String::from("Fee on ID transfer")),
-                None => Ok(false),
-            }
-        }
-    }
-
-    pub fn get_value(&self) -> Result<u32, String> {
-        if self.is_coin_transfer()? {
-            return Ok(self.value as u32 - self.fee.unwrap() as u32);
-        };
-        Err(String::from(
-            "Can not get transaction value: Transaction not coin transfer",
-        ))
-    }
-    pub fn get_fee(&self) -> Result<u32, String> {
-        if self.is_coin_transfer()? {
-            return Ok(self.fee.unwrap() as u32);
-        };
-        Err(String::from(
-            "Can not get transaction fee: Transaction not coin transfer",
-        ))
-    }
-    pub fn get_id(self) -> Result<u32, String> {
-        if !self.is_coin_transfer()? {
-            return Ok(self.value as u32);
-        };
-        Err(String::from("Transaction not ID transfer"))
-    }
-}
-
-impl fmt::Display for TransactionValue {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.is_coin_transfer().unwrap() {
-            write!(
-                f,
-                "{}-{}CEL",
-                self.get_value().unwrap(),
-                self.get_fee().unwrap()
-            )
-        } else {
-            write!(f, "{}ID", self.get_id().unwrap())
-        }
-    }
-}
-
-impl Serialize for TransactionValue {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<TransactionValue>, String> {
-        let mut tmp_val = ((data[*i] as i32) << 24)
-            + ((data[*i + 1] as i32) << 16)
-            + ((data[*i + 2] as i32) << 8)
-            + (data[*i + 3] as i32);
-        let mut tmp_fee = None;
-        if tmp_val >= 0 {
-            tmp_fee = Some((tmp_val & 0xff) as u8);
-            tmp_val >>= 8;
-        }
-        let transaction_value = TransactionValue {
-            value: tmp_val,
-            fee: tmp_fee,
-        };
-        *i += transaction_value.serialized_len()?;
-        Ok(Box::new(transaction_value))
-    }
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        let mut tmp_val = self.value;
-        if tmp_val >= 0 {
-            tmp_val = (tmp_val << 8) + (self.get_fee()? as i32);
-        }
-        buffer[*i] = (tmp_val >> 24) as u8;
-        buffer[*i + 1] = (tmp_val >> 16) as u8;
-        buffer[*i + 2] = (tmp_val >> 8) as u8;
-        buffer[*i + 3] = tmp_val as u8;
-        *i += 4;
-        Ok(4)
-    }
-
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(4)
-    }
-}
-
-impl Serialize for PublicKey {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<PublicKey>, String> {
-        if data.len() < 33 {
-            return Err(format!(
-                "Too little data for public key, expected at least 33 got {}",
-                data.len(),
-            ));
-        }
-        match PublicKey::from_slice(&data[*i..*i + 33]) {
-            Ok(public_key) => {
-                *i += public_key.serialized_len()?;
-                Ok(Box::new(public_key))
-            }
-            Err(e) => Err(format!(
-                "Could not deserialize public key {:x?}: {}",
-                &data[*i..*i + 33],
-                e.to_string()
-            )),
-        }
-    }
-
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        let self_bytes = self.serialize();
-        buffer[*i..*i + self_bytes.len()].copy_from_slice(&self_bytes);
-        *i += self_bytes.len();
-        Ok(self_bytes.len())
-    }
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(self.serialize().len())
-    }
-}
-
-impl Serialize for SecretKey {
-    fn from_serialized(
-        secret_key: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<SecretKey>, String> {
-        match SecretKey::from_slice(secret_key) {
-            Ok(secret_key) => {
-                *i += secret_key.len();
-                Ok(Box::new(secret_key))
-            }
-            Err(e) => Err(format!(
-                "Could not deserialize secret key {:?}: {}",
-                secret_key,
-                e.to_string()
-            )),
-        }
-    }
-
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        let self_bytes = self.as_ref();
-        buffer.copy_from_slice(self_bytes);
-        *i += self_bytes.len();
-        Ok(self_bytes.len())
-    }
-
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(self.as_ref().len())
-    }
-}
 pub struct Transaction {
     uid: UniversalId,
     pub from_pk: PublicKey,
@@ -437,5 +270,13 @@ impl Serialize for TransactionBlock {
             tmp_len += signature.serialize_compact().len();
         }
         Ok(tmp_len)
+    }
+}
+
+impl AsRef<[u8]> for TransactionBlock {
+    fn as_ref(&self) -> &[u8] {
+        let out = vec![0; self.serialized_len().unwrap()];
+        self.serialize_into(&mut out, &mut 0);
+        out.as_slice()
     }
 }

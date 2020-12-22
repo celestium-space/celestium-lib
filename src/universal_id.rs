@@ -5,25 +5,19 @@ use std::{collections::HashMap, fmt};
 #[derive(Copy, Clone)]
 pub struct UniversalId {
     is_continuation: bool,
-    is_magic: bool,
     value: u16,
 }
 
 impl UniversalId {
-    pub fn new(is_continuation: bool, is_magic: bool, value: u16) -> UniversalId {
+    pub fn new(is_continuation: bool, value: u16) -> UniversalId {
         UniversalId {
             is_continuation,
-            is_magic,
             value,
         }
     }
 
     pub fn is_continuation(&self) -> bool {
         self.is_continuation
-    }
-
-    pub fn is_magic(&self) -> bool {
-        self.is_magic
     }
 
     pub fn get_value(&self) -> u16 {
@@ -49,7 +43,6 @@ impl Serialize for UniversalId {
     ) -> Result<Box<UniversalId>, String> {
         let uid = UniversalId {
             is_continuation: data[*i] & 0x80 > 0,
-            is_magic: data[*i] == 0x40,
             value: (((data[*i] & 0x3f) as u16) << 8) + data[*i + 1] as u16,
         };
         *i += 2;
@@ -59,9 +52,6 @@ impl Serialize for UniversalId {
         let mut first_byte = (self.value >> 8) as u8;
         if self.is_continuation {
             first_byte ^= 0x80;
-        }
-        if self.is_magic {
-            first_byte ^= 0x40;
         }
         buffer[*i] = first_byte;
         buffer[*i + 1] = (self.value & 0xff) as u8;

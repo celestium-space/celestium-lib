@@ -1,41 +1,29 @@
 use crate::{
-    block::BlockHash,
     blockchain::Blockchain,
-    magic::Magic,
+    merkle_tree::MerkleTree,
     serialize::Serialize,
-    transaction::{Transaction, TransactionBlock, TransactionValue},
+    transaction::{Transaction, TransactionBlock},
+    transaction_value::TransactionValue,
     universal_id::UniversalId,
+    user::User,
 };
-use crossbeam::thread;
 use secp256k1::{PublicKey, SecretKey};
-use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    fs::File,
-    future::{Future, Pending, Ready},
-    io::Read,
-    ops::Range,
-    path::PathBuf,
-    task::{Context, Poll},
-};
-use thread::ScopedJoinHandle;
+use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 pub struct Wallet {
     blockchain: Blockchain,
     current_uid: UniversalId,
     pk: Option<PublicKey>,
     sk: Option<SecretKey>,
-    transaction_blocks: Vec<TransactionBlock>,
+    users: HashMap<PublicKey, User>,
+    merkle_tree: MerkleTree<TransactionBlock>,
 }
-
-const N_PAR_WORKERS: u32 = 32;
-const PAR_WORK: u32 = 10000;
 
 impl Wallet {
     pub fn new(
         blockchain: Blockchain,
         pk: PublicKey,
         sk: SecretKey,
-        transaction_blocks: Vec<TransactionBlock>,
+        merkle_tree: MerkleTree<TransactionBlock>,
     ) -> Self {
         let self_uid = blockchain.get_user_uid(pk).unwrap();
         Wallet {
@@ -43,15 +31,17 @@ impl Wallet {
             current_uid: self_uid,
             pk: Some(pk),
             sk: Some(sk),
-            transaction_blocks,
+            merkle_tree,
         }
     }
 
     pub fn from_binary(
         blockchain_bin: Vec<u8>,
+        transactions_bin: Vec<u8>,
+        nodes_bin: Vec<u8>,
         pk_bin: Vec<u8>,
         sk_bin: Vec<u8>,
-    ) -> Result<Wallet, String> {
+    ) -> Result<Self, String> {
         let mut j = 0;
         let mut k = 0;
         let mut users = HashMap::new();
@@ -60,14 +50,17 @@ impl Wallet {
         let current_uid;
         match blockchain.get_user_uid(pk) {
             Ok(u) => current_uid = u,
-            Err(_) => current_uid = UniversalId::new(false, false, 0),
+            Err(_) => current_uid = UniversalId::new(false, 0),
         }
+        let merkle_tree =
+            MerkleTree::from_serialized_transactions(&transactions_bin, &mut 0, &mut users)?;
+        merkle_tree.add_serialized_nodes(&nodes_bin);
         Ok(Wallet {
             blockchain,
             current_uid,
             pk: Some(pk),
             sk: Some(*SecretKey::from_serialized(&sk_bin, &mut k, &mut users)?),
-            transaction_blocks: Vec::new(),
+            merkle_tree,
         })
     }
 
@@ -133,6 +126,14 @@ impl Wallet {
             }
         }
         Ok(total)
+    }
+
+    pub fn verify_user(
+        &self,
+        pk: PublicKey,
+        previous_transactions: Vec<[u8; 32]>,
+    ) -> Result<bool, Vec<[u8; 32]>> {
+        self.merkle_tree.
     }
 
     // pub fn start_mining_thread<'a>(
@@ -248,33 +249,34 @@ impl Wallet {
     //     self.mine_transaction_blocks(&self.transaction_blocks[0..amount], None)
     // }
 
-    pub fn add_serialized_transaction_block(
-        mut self,
-        serialized_transaction_block: Vec<u8>,
-    ) -> Result<Vec<u8>, String> {
-        let transaction_block = *TransactionBlock::from_serialized(
-            &serialized_transaction_block,
-            &mut 0,
-            &mut HashMap::new(),
-        )?;
-        self.transaction_blocks.push(transaction_block);
-        self.get_serialized_transaction_blocks()
-    }
+    // pub fn add_serialized_transaction_block(
+    //     mut self,
+    //     serialized_transaction_block: Vec<u8>,
+    // ) -> Result<Vec<u8>, String> {
+    //     let transaction_block = *TransactionBlock::from_serialized(
+    //         &serialized_transaction_block,
+    //         &mut 0,
+    //         &mut HashMap::new(),
+    //     )?;
+    //     self.transaction_blocks.push(transaction_block);
+    //     self.get_serialized_transaction_blocks()
+    // }
 
-    pub fn get_serialized_transaction_blocks(self) -> Result<Vec<u8>, String> {
-        let mut len = 0;
-        for transaction_block in self.transaction_blocks.iter() {
-            len += transaction_block.serialized_len()?;
-        }
-        let mut buffer = vec![0u8; len];
-        for transaction_block in self.transaction_blocks {
-            transaction_block.serialize_into(&mut buffer, &mut 0)?;
-        }
-        Ok(buffer)
-    }
+    // pub fn get_serialized_transaction_blocks(self) -> Result<Vec<u8>, String> {
+    //     let mut len = 0;
+    //     for transaction_block in self.transaction_blocks.iter() {
+    //         len += transaction_block.serialized_len()?;
+    //     }
+    //     let mut buffer = vec![0u8; len];
+    //     for transaction_block in self.transaction_blocks {
+    //         transaction_block.serialize_into(&mut buffer, &mut 0)?;
+    //     }
+    //     Ok(buffer)
+    // }
 
     pub fn add_serialized_block(&mut self, serialized_block: Vec<u8>) -> Result<Vec<u8>, String> {
-        self.blockchain.add_serialized_block(serialized_block)
+        self.blockchain
+            .add_serialized_block(serialized_block, &mut self.users)
     }
 
     pub fn get_serialized_blockchain(&self) -> Result<Vec<u8>, String> {
@@ -283,12 +285,12 @@ impl Wallet {
         Ok(buffer)
     }
 
-    pub fn get_balance(&self) -> Result<u32, String> {
-        match &self.pk {
-            Some(pk) => self.blockchain.get_user_value_change(*pk),
-            None => Err(String::from("Personal keyset not defined")),
-        }
-    }
+    // pub fn get_balance(&self) -> Result<u32, String> {
+    //     match &self.pk {
+    //         Some(pk) => self.blockchain.get_user_value_change(*pk),
+    //         None => Err(String::from("Personal keyset not defined")),
+    //     }
+    // }
 
     pub fn load_public_key_from_file(
         public_key_file_location: &PathBuf,
@@ -316,57 +318,4 @@ impl Wallet {
             &mut HashMap::new(),
         )?)
     }
-}
-
-struct Miner {
-    my_serialized_block: Vec<u8>,
-    i: u64,
-    end: u64,
-    current_magic: Magic,
-}
-
-impl Miner {
-    pub fn new(serialized_block: Vec<u8>) -> Self {
-        Miner::new_ranged(serialized_block, 0u64..u64::MAX)
-    }
-
-    pub fn new_ranged(serialized_block: Vec<u8>, range: Range<u64>) -> Self {
-        let block_len = serialized_block.len();
-        let magic_byte_count = 1usize;
-        let my_serialized_block = vec![0u8; block_len + magic_byte_count];
-        my_serialized_block[..my_serialized_block.len() - 1].copy_from_slice(&serialized_block);
-        let mut magic = Magic::new(range.start as u64, 1);
-        Miner {
-            my_serialized_block,
-            i: range.start,
-            end: range.end,
-            current_magic: magic,
-        }
-    }
-}
-
-impl Future for Miner {
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Vec<u8>> {
-        self.current_magic.increase();
-        let magic_byte_count = self.current_magic.serialized_len().unwrap();
-        let block_len = self.my_serialized_block.len();
-        self.current_magic
-            .serialize_into(
-                &mut self.my_serialized_block,
-                &mut (block_len - magic_byte_count),
-            )
-            .unwrap();
-        let hash = *BlockHash::from_serialized(
-            Sha256::digest(&self.my_serialized_block).as_slice(),
-            &mut 0,
-            &mut HashMap::new(),
-        )
-        .unwrap();
-        if hash.contains_enough_work() {
-            return Ready(self.my_serialized_block.to_vec());
-        }
-        Pending
-    }
-
-    type Output = Magic;
 }

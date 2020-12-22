@@ -1,60 +1,21 @@
 use crate::{
-    block::{Block, BlockHash},
-    magic::Magic,
-    serialize::Serialize,
-    transaction::{TransactionBlock, TransactionValue},
-    universal_id::UniversalId,
+    block::Block, block_hash::BlockHash, magic::Magic, serialize::Serialize,
+    transaction::TransactionBlock, transaction_value::TransactionValue, universal_id::UniversalId,
     user::User,
 };
 use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
+const BLOCK_ZERO_FEE: u64 = u64::MAX;
+
 pub struct Blockchain {
     blocks: Vec<Block>,
-    users: HashMap<PublicKey, User>,
 }
 
-// fn get_block_finders_fee(_: usize) -> i32 {
-//     return 1337;
-// }
-
 impl Blockchain {
-    pub fn new(blocks: Vec<Block>, users: HashMap<PublicKey, User>) -> Blockchain {
-        Blockchain { blocks, users }
-    }
-
-    pub fn get_user_uid(&self, pk: PublicKey) -> Result<UniversalId, String> {
-        match self.users.get(&pk) {
-            Some(u) => Ok(u.get_uid()),
-            None => Err(format!("No user with public key: {}", pk)),
-        }
-    }
-
-    pub fn count_users(&self) -> usize {
-        self.users.len()
-    }
-
-    pub fn get_user_value_change(&self, pk: PublicKey) -> Result<u32, String> {
-        match self.users.get(&pk) {
-            Some(user) => Ok(user.get_balance()),
-            None => Err(format!("No user with public key {}", pk)),
-        }
-    }
-
-    pub fn from_binary(data: &[u8]) -> Result<Box<Blockchain>, String> {
-        let mut users = HashMap::new();
-        let block_zero_owner_pk = *PublicKey::from_serialized(&data[2..35], &mut 0, &mut users)?;
-        let mut block_zero_owner = User::new(block_zero_owner_pk);
-        block_zero_owner
-            .give(TransactionValue::new(100000, Some(0)))
-            .unwrap();
-        users.insert(block_zero_owner_pk, block_zero_owner);
-        let mut i = 0;
-        let blocks = Blockchain::parse_blocks(data, &mut i, &mut users)?;
-        let user = users.get_mut(&block_zero_owner_pk).unwrap();
-        user.take(TransactionValue::new(100000, Some(0))).unwrap();
-        Ok(Box::new(Blockchain::new(blocks, users)))
+    pub fn new(blocks: Vec<Block>) -> Blockchain {
+        Blockchain { blocks }
     }
 
     fn parse_blocks(
@@ -117,7 +78,7 @@ impl Blockchain {
             back_hash = Box::new(BlockHash::default());
         }
         let magic = Magic::new(0);
-        let uid = UniversalId::new(false, true, magic.serialized_len()? as u16);
+        let uid = UniversalId::new(false, magic.serialized_len()? as u16);
         let mut unmined_block = vec![
             0;
             transaction_blocks_len
@@ -137,8 +98,12 @@ impl Blockchain {
         Ok(unmined_block.to_vec())
     }
 
-    pub fn add_serialized_block(&mut self, block: Vec<u8>) -> Result<Vec<u8>, String> {
-        let block = *Block::from_serialized(&block, &mut 0, &mut self.users)?;
+    pub fn add_serialized_block(
+        &mut self,
+        block: Vec<u8>,
+        users: &mut HashMap<PublicKey, User>,
+    ) -> Result<Vec<u8>, String> {
+        let block = *Block::from_serialized(&block, &mut 0, &mut users)?;
         self.blocks.push(block);
         let mut buffer = vec![0u8; self.serialized_len()?];
         self.serialize_into(&mut buffer, &mut 0)?;
@@ -148,11 +113,24 @@ impl Blockchain {
 
 impl Serialize for Blockchain {
     fn from_serialized(
-        _: &[u8],
-        _: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
+        data: &[u8],
+        i: &mut usize,
+        users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Blockchain>, String> {
-        todo!();
+        let block_zero_owner_pk = *PublicKey::from_serialized(&data[2..35], &mut 0, &mut users)?;
+        let mut block_zero_owner = User::new(block_zero_owner_pk);
+        block_zero_owner
+            .give(TransactionValue::new_coin_transfer(BLOCK_ZERO_FEE, 0))
+            .unwrap();
+        if users
+            .insert(block_zero_owner_pk, block_zero_owner)
+            .is_some()
+        {
+            return Err("Unexpected: Block zero user already exists in system".to_string());
+        }
+        let mut i = 0;
+        let blocks = Blockchain::parse_blocks(data, &mut i, &mut users)?;
+        Ok(Box::new(Blockchain::new(blocks)))
     }
 
     fn serialize_into(&self, data: &mut [u8], mut i: &mut usize) -> Result<usize, String> {
