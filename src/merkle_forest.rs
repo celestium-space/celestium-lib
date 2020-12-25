@@ -1,9 +1,11 @@
-use crate::{serialize::Serialize, transaction::TransactionBlock, universal_id::UniversalId};
-use num::integer::sqrt;
+use crate::{
+    serialize::{DynamicSized, Serialize},
+    transaction::TransactionBlock,
+};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-const HASH_SIZE: usize = 32;
+pub const HASH_SIZE: usize = 32;
 
 struct Node {
     left: [u8; HASH_SIZE],
@@ -28,7 +30,6 @@ impl Node {
 pub struct MerkleForest<T> {
     leafs: HashMap<[u8; HASH_SIZE], T>,
     nodes: HashMap<[u8; HASH_SIZE], Node>,
-    height: usize,
 }
 
 impl MerkleForest<TransactionBlock> {
@@ -38,35 +39,13 @@ impl MerkleForest<TransactionBlock> {
         users: &mut HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Self, String> {
         let leafs: HashMap<[u8; HASH_SIZE], TransactionBlock> = HashMap::new();
-        let mut uid;
-        loop {
-            let mut j = *i;
-            uid = *UniversalId::from_serialized(&data, &mut j, users)?;
-            if !uid.is_magic() {
-                let pre_i = *i;
-                let transaction = *TransactionBlock::from_serialized(&data, &mut i, users)?;
-                let hash = [0; HASH_SIZE];
-                hash.copy_from_slice(Sha256::digest(&data[pre_i..*i]).as_slice());
-                leafs.insert(hash, transaction);
-            } else {
-                break;
-            }
-        }
-        let root_hash_index = *i + uid.serialized_len()?;
-        let root_hash = [0; HASH_SIZE];
-        root_hash.copy_from_slice(&data[root_hash_index..root_hash_index + HASH_SIZE]);
-        let length = leafs.len();
-        let height = sqrt(length);
-        if length > 2048 || length != height.pow(2) {
-            return Err(format!(
-                "Merkle tree leaf size must be a squareroot and maximum 2048, got {}",
-                length
-            ));
+        while *i < data.len() {
+            let transaction = *TransactionBlock::from_serialized(&data, &mut i, users)?;
+            leafs.insert(transaction.hash()?, transaction);
         }
         Ok(MerkleForest {
             leafs,
             nodes: HashMap::new(),
-            height,
         })
     }
 
@@ -90,29 +69,33 @@ impl MerkleForest<TransactionBlock> {
     }
 
     pub fn add_serialized_transactions(
-        &self,
+        &mut self,
         data: &[u8],
         users: &mut HashMap<secp256k1::PublicKey, crate::user::User>,
-    ) -> Result<bool, String> {
-        let i = 0;
+    ) -> Result<Vec<TransactionBlock>, String> {
+        let mut transactions = Vec::new();
+        let mut i = 0;
         while i < data.len() {
             let pre_i = i;
-            let transaction = *TransactionBlock::from_serialized(&data, &mut i, users)?;
-            let hash = [0; 32];
+            let mut hash = [0; 32];
             hash.copy_from_slice(Sha256::digest(&data[pre_i..i]).as_slice());
-            self.leafs.insert(hash, transaction);
+            self.leafs.insert(
+                hash,
+                *TransactionBlock::from_serialized(&data, &mut i, users)?,
+            );
+            transactions.push(*TransactionBlock::from_serialized(&data, &mut i, users)?);
         }
-        Ok(true)
+        Ok(transactions)
     }
 
     fn serialize_all_transactions(&self) -> Result<Vec<u8>, String> {
-        let transaction_len = 0;
-        for (key, transaction) in self.leafs {
-            transaction_len += transaction.serialized_len()?;
+        let mut transaction_len = 0;
+        for (_, transaction) in self.leafs.iter() {
+            transaction_len += transaction.serialized_len();
         }
-        let serialized = vec![0; transaction_len];
-        let i = 0;
-        for (key, transaction) in self.leafs {
+        let mut serialized = vec![0; transaction_len];
+        let mut i = 0;
+        for (_, transaction) in self.leafs.iter() {
             transaction.serialize_into(&mut serialized, &mut i)?;
         }
         Ok(serialized)
@@ -146,7 +129,32 @@ impl MerkleForest<TransactionBlock> {
         }
     }
 
-    fn get_parents(&self, hashes: Vec<[u8; 32]>) -> (HashMap<[u8; 32], Node>, Vec<[u8; 32]>) {}
+    fn is_ancestor(
+        &self,
+        decendant: TransactionBlock,
+        ancestor: [u8; 32],
+    ) -> Result<TransactionBlock, Vec<[u8; 32]>> {
+        let current_hash = ancestor;
+        let tmp_node = self.nodes.get(&current_hash);
+        match tmp_node {
+            Some(node) => {
+                let errs;
+                match self.is_ancestor(decendant, node.left) {
+                    Ok(left) => return Ok(left),
+                    Err(e) => errs = e,
+                };
+                match self.is_ancestor(decendant, node.right) {
+                    Ok(right) => return Ok(right),
+                    Err(e) => errs.append(&mut e),
+                };
+                Err(errs)
+            }
+            None => match self.leafs.get(&current_hash) {
+                Some(result) => Ok(*result),
+                None => Err(vec![current_hash]),
+            },
+        }
+    }
 
     // fn un_rooted_leafs(&self, known_roots) -> Vec<TransactionBlock> {
 

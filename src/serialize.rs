@@ -8,6 +8,13 @@ pub trait Serialize {
         i: &mut usize,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Self>, String>;
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String>;
-    fn serialized_len(&self) -> Result<usize, String>;
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String>;
+}
+
+pub trait StaticSized {
+    fn serialized_len() -> usize;
+}
+
+pub trait DynamicSized {
+    fn serialized_len(&self) -> usize;
 }

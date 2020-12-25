@@ -1,6 +1,13 @@
-use crate::{serialize::Serialize, user::User};
+use crate::{
+    serialize::{Serialize, StaticSized},
+    user::User,
+};
 use secp256k1::{PublicKey, SecretKey};
 use std::collections::HashMap;
+
+const PUBLIC_KEY_COMPRESSED_SIZE: usize = 32;
+const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 64;
+const SECRET_KEY_SIZE: usize = 32;
 
 impl Serialize for PublicKey {
     fn from_serialized(
@@ -16,7 +23,7 @@ impl Serialize for PublicKey {
         }
         match PublicKey::from_slice(&data[*i..*i + 33]) {
             Ok(public_key) => {
-                *i += public_key.serialized_len()?;
+                *i += PublicKey::serialized_len();
                 Ok(Box::new(public_key))
             }
             Err(e) => Err(format!(
@@ -33,8 +40,11 @@ impl Serialize for PublicKey {
         *i += self_bytes.len();
         Ok(self_bytes.len())
     }
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(self.serialize().len())
+}
+
+impl StaticSized for PublicKey {
+    fn serialized_len() -> usize {
+        PUBLIC_KEY_COMPRESSED_SIZE
     }
 }
 
@@ -63,8 +73,10 @@ impl Serialize for SecretKey {
         *i += self_bytes.len();
         Ok(self_bytes.len())
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(self.as_ref().len())
+impl StaticSized for SecretKey {
+    fn serialized_len() -> usize {
+        SECRET_KEY_SIZE
     }
 }

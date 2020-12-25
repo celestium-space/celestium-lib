@@ -1,4 +1,4 @@
-use crate::serialize::Serialize;
+use crate::serialize::{Serialize, StaticSized};
 use std::{
     cmp::Ordering,
     fmt::{self, Display, Formatter},
@@ -92,8 +92,10 @@ impl Serialize for Magic {
         *i += MAGIC_LEN;
         Ok(MAGIC_LEN)
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(MAGIC_LEN)
+impl StaticSized for Magic {
+    fn serialized_len() -> usize {
+        MAGIC_LEN
     }
 }

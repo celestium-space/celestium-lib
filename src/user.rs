@@ -1,25 +1,25 @@
-use crate::{transaction::TransactionValue, universal_id::UniversalId};
+use crate::{transaction_value::TransactionValue, universal_id::UniversalId};
 use secp256k1::PublicKey;
 use std::fmt;
 
 pub struct User {
     pk: PublicKey,
     current_uid: UniversalId,
-    current_balance: u32,
-    ids: Vec<u32>,
+    current_balance: u64,
+    ids: Vec<u128>,
 }
 
 impl User {
     pub fn new(pk: PublicKey) -> User {
         User {
             pk,
-            current_uid: UniversalId::new(false, false, 0),
+            current_uid: UniversalId::new(false, 0),
             current_balance: 0,
             ids: Vec::new(),
         }
     }
 
-    pub fn get_balance(&self) -> u32 {
+    pub fn get_balance(&self) -> u64 {
         self.current_balance
     }
 
@@ -28,7 +28,7 @@ impl User {
     }
 
     pub fn give(&mut self, value: TransactionValue) -> Result<bool, String> {
-        if value.is_coin_transfer()? {
+        if value.is_coin_transfer() {
             self.current_balance += value.get_value()?;
         } else {
             let tmp_id = value.get_id()?;
@@ -44,7 +44,7 @@ impl User {
         Ok(true)
     }
     pub fn take(&mut self, value: TransactionValue) -> Result<bool, String> {
-        if value.is_coin_transfer()? {
+        if value.is_coin_transfer() {
             let tmp_value = value.get_value()?;
             if tmp_value <= self.current_balance {
                 self.current_balance -= tmp_value;

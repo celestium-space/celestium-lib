@@ -1,4 +1,7 @@
-use crate::{serialize::Serialize, user::User};
+use crate::{
+    serialize::{Serialize, StaticSized},
+    user::User,
+};
 use secp256k1::PublicKey;
 use std::{
     collections::HashMap,
@@ -22,7 +25,7 @@ pub struct TransactionValue {
 
 impl TransactionValue {
     pub fn new_coin_transfer(value: u64, fee: u64) -> Result<Self, String> {
-        let self_value = [0; TRANSACTION_TOTAL_LEN];
+        let mut self_value = [0; TRANSACTION_TOTAL_LEN];
         for (i, byte) in self_value.iter().enumerate() {
             if i < TRANSACTION_FEE_LEN {
                 self_value[i] = (fee >> ((TRANSACTION_FEE_LEN - 1 - i) * 8)) as u8;
@@ -45,7 +48,7 @@ impl TransactionValue {
 
     pub fn get_value(&self) -> Result<u64, String> {
         if self.is_coin_transfer() {
-            let value: u64 = 0;
+            let mut value: u64 = 0;
             for (i, byte) in self.value
                 [TRANSACTION_TOTAL_LEN - TRANSACTION_VALUE_LEN - 1..TRANSACTION_TOTAL_LEN]
                 .iter()
@@ -62,7 +65,7 @@ impl TransactionValue {
     }
     pub fn get_fee(&self) -> Result<u64, String> {
         if self.is_coin_transfer() {
-            let value: u64 = 0;
+            let mut value: u64 = 0;
             for (i, byte) in self.value[0..TRANSACTION_FEE_LEN].iter().enumerate() {
                 value += (*byte as u64) << ((TRANSACTION_FEE_LEN - 1 - i) * 8);
             }
@@ -75,7 +78,7 @@ impl TransactionValue {
     }
     pub fn get_id(self) -> Result<u128, String> {
         if !self.is_coin_transfer() {
-            let value: u128 = 0;
+            let mut value: u128 = 0;
             for (i, byte) in self.value[0..TRANSACTION_ID_LEN].iter().enumerate() {
                 value += (*byte as u128) << ((TRANSACTION_ID_LEN - 1 - i) * 8);
             }
@@ -116,12 +119,12 @@ impl Serialize for TransactionValue {
                 TRANSACTION_TOTAL_LEN, bytes_left
             ));
         }
-        let value = [0; TRANSACTION_TOTAL_LEN];
+        let mut value = [0; TRANSACTION_TOTAL_LEN];
         value.copy_from_slice(&data[*i..*i + TRANSACTION_TOTAL_LEN]);
         Ok(Box::new(TransactionValue { value }))
     }
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        let bytes_left = data.len() - i;
+        let bytes_left = data.len() - *i;
         if bytes_left < TRANSACTION_TOTAL_LEN {
             return Err(format!(
                 "Too few bytes left to serialize transaction value into, expected at least {} got {}",
@@ -132,8 +135,10 @@ impl Serialize for TransactionValue {
         *i += TRANSACTION_TOTAL_LEN;
         Ok(TRANSACTION_TOTAL_LEN)
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(TRANSACTION_TOTAL_LEN)
+impl StaticSized for TransactionValue {
+    fn serialized_len() -> usize {
+        TRANSACTION_TOTAL_LEN
     }
 }

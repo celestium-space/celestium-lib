@@ -1,9 +1,14 @@
-use crate::{serialize::Serialize, user::User};
+use crate::{
+    serialize::{Serialize, StaticSized},
+    user::User,
+};
 use secp256k1::PublicKey;
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
 };
+
+const BLOCK_HASH_SIZE: usize = 32;
 
 pub struct BlockHash {
     value: [u8; 32],
@@ -65,11 +70,13 @@ impl Serialize for BlockHash {
 
     fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         buffer[*i..*i + 32].copy_from_slice(&self.value);
-        *i += self.serialized_len()?;
-        Ok(self.serialized_len()?)
+        *i += BlockHash::serialized_len();
+        Ok(BlockHash::serialized_len())
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(32)
+impl StaticSized for BlockHash {
+    fn serialized_len() -> usize {
+        BLOCK_HASH_SIZE
     }
 }

@@ -1,5 +1,4 @@
-use crate::serialize::Serialize;
-use std::mem::transmute;
+use crate::serialize::{Serialize, StaticSized};
 
 const BLOCK_VERSION_LEN: usize = 4;
 
@@ -29,8 +28,10 @@ impl Serialize for BlockVersion {
     fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
         todo!()
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(BLOCK_VERSION_LEN)
+impl StaticSized for BlockVersion {
+    fn serialized_len() -> usize {
+        BLOCK_VERSION_LEN
     }
 }

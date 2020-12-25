@@ -1,6 +1,11 @@
-use crate::{serialize::Serialize, user::User};
+use crate::{
+    serialize::{Serialize, StaticSized},
+    user::User,
+};
 use secp256k1::PublicKey;
 use std::{collections::HashMap, fmt};
+
+const UNIVERSAL_ID_SIZE: usize = 2;
 
 #[derive(Copy, Clone)]
 pub struct UniversalId {
@@ -58,8 +63,10 @@ impl Serialize for UniversalId {
         *i += 2;
         Ok(2)
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        Ok(2)
+impl StaticSized for UniversalId {
+    fn serialized_len() -> usize {
+        UNIVERSAL_ID_SIZE
     }
 }

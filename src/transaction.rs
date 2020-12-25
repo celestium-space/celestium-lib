@@ -1,5 +1,7 @@
 use crate::{
-    serialize::Serialize, transaction_value::TransactionValue, universal_id::UniversalId,
+    serialize::{DynamicSized, Serialize, StaticSized},
+    transaction_value::TransactionValue,
+    universal_id::UniversalId,
     user::User,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
@@ -61,13 +63,14 @@ impl Serialize for Transaction {
         self.value.serialize_into(&mut buffer, &mut i)?;
         Ok(*i - start_i)
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        let transaction_len = self.uid.serialized_len()?
-            + self.from_pk.serialized_len()?
-            + self.to_pk.serialized_len()?
-            + self.value.serialized_len()?;
-        Ok(transaction_len)
+impl StaticSized for Transaction {
+    fn serialized_len() -> usize {
+        UniversalId::serialized_len()
+            + PublicKey::serialized_len()
+            + PublicKey::serialized_len()
+            + TransactionValue::serialized_len()
     }
 }
 
@@ -89,7 +92,7 @@ impl TransactionBlock {
     pub fn get_user_value_change(&mut self, pk: &mut PublicKey) -> Result<i32, String> {
         let mut tmp_value = 0;
         for transaction in self.transactions.iter_mut() {
-            if transaction.value.is_coin_transfer()? {
+            if transaction.value.is_coin_transfer() {
                 let transaction_value = transaction.value.get_value()? as i32;
                 if pk == &mut transaction.from_pk {
                     tmp_value -= transaction_value;
@@ -100,6 +103,14 @@ impl TransactionBlock {
             }
         }
         Ok(tmp_value)
+    }
+
+    pub fn hash(&self) -> Result<[u8; 32], String> {
+        let data = vec![0; self.serialized_len()];
+        self.serialize_into(&mut data, &mut 0)?;
+        let hash = [0; 32];
+        hash.copy_from_slice(&Sha256::digest(&data));
+        Ok(hash)
     }
 
     // pub fn len(&self) -> usize {
@@ -126,7 +137,7 @@ impl TransactionBlock {
     fn serialize_content(&mut self) -> Result<Vec<u8>, String> {
         if !self.transactions.is_empty() {
             let mut return_buffer =
-                vec![0; self.transactions.len() * self.transactions[0].serialized_len()?];
+                vec![0; self.transactions.len() * Transaction::serialized_len()];
             let mut i = 0;
             for transaction in self.transactions.iter_mut() {
                 transaction.serialize_into(&mut return_buffer, &mut i)?;
@@ -139,9 +150,7 @@ impl TransactionBlock {
     fn total_fee(&self) -> usize {
         let mut total_fee = 0;
         for transaction in self.transactions.iter() {
-            if transaction.value.is_coin_transfer().is_ok()
-                && transaction.value.is_coin_transfer().unwrap()
-            {
+            if transaction.value.is_coin_transfer() {
                 if let Ok(ref fee) = transaction.value.get_fee() {
                     total_fee += *fee as usize;
                 }
@@ -260,22 +269,23 @@ impl Serialize for TransactionBlock {
         }
         Ok(*i - content_start)
     }
-
-    fn serialized_len(&self) -> Result<usize, String> {
+}
+impl DynamicSized for TransactionBlock {
+    fn serialized_len(&self) -> usize {
         let mut tmp_len = 0;
         for transaction in &self.transactions {
-            tmp_len += transaction.serialized_len()?;
+            tmp_len += Transaction::serialized_len();
         }
         for signature in self.signatures.iter() {
             tmp_len += signature.serialize_compact().len();
         }
-        Ok(tmp_len)
+        tmp_len
     }
 }
 
 impl AsRef<[u8]> for TransactionBlock {
     fn as_ref(&self) -> &[u8] {
-        let out = vec![0; self.serialized_len().unwrap()];
+        let out = vec![0; self.serialized_len()];
         self.serialize_into(&mut out, &mut 0);
         out.as_slice()
     }

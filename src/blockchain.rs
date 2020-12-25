@@ -1,6 +1,11 @@
 use crate::{
-    block::Block, block_hash::BlockHash, magic::Magic, serialize::Serialize,
-    transaction::TransactionBlock, transaction_value::TransactionValue, universal_id::UniversalId,
+    block::Block,
+    block_hash::BlockHash,
+    magic::Magic,
+    serialize::{DynamicSized, Serialize, StaticSized},
+    transaction::TransactionBlock,
+    transaction_value::TransactionValue,
+    universal_id::UniversalId,
     user::User,
 };
 use secp256k1::PublicKey;
@@ -28,7 +33,7 @@ impl Blockchain {
         while *i < data.len() {
             let block = *Block::from_serialized(&data, &mut i, users)?;
             if block.back_hash == hash {
-                let block_len = block.serialized_len()?;
+                let block_len = Block::serialized_len();
                 hash = *BlockHash::from_serialized(
                     Sha256::digest(&data[*i - block_len..*i]).as_slice(),
                     &mut 0,
@@ -59,11 +64,11 @@ impl Blockchain {
     ) -> Result<Vec<u8>, String> {
         let mut transaction_blocks_len = 0;
         for transaction_block in transaction_blocks.iter() {
-            transaction_blocks_len += transaction_block.serialized_len()?;
+            transaction_blocks_len += transaction_block.serialized_len();
         }
         let back_hash;
         if !self.blocks.is_empty() {
-            let mut last_block_serialized = vec![0; self.blocks.last().unwrap().serialized_len()?];
+            let mut last_block_serialized = vec![0; Block::serialized_len()];
             let mut i = 0;
             self.blocks
                 .last()
@@ -78,14 +83,14 @@ impl Blockchain {
             back_hash = Box::new(BlockHash::default());
         }
         let magic = Magic::new(0);
-        let uid = UniversalId::new(false, magic.serialized_len()? as u16);
+        let uid = UniversalId::new(false, Magic::serialized_len() as u16);
         let mut unmined_block = vec![
             0;
             transaction_blocks_len
-                + uid.serialized_len()?
-                + back_hash.serialized_len()?
-                + finder_pk.serialized_len()?
-                + magic.serialized_len()?
+                + UniversalId::serialized_len()
+                + BlockHash::serialized_len()
+                + PublicKey::serialized_len()
+                + Magic::serialized_len()
         ];
         let mut i = 0;
         for transaction_block in transaction_blocks.iter() {
@@ -105,7 +110,7 @@ impl Blockchain {
     ) -> Result<Vec<u8>, String> {
         let block = *Block::from_serialized(&block, &mut 0, &mut users)?;
         self.blocks.push(block);
-        let mut buffer = vec![0u8; self.serialized_len()?];
+        let mut buffer = vec![0u8; self.serialized_len()];
         self.serialize_into(&mut buffer, &mut 0)?;
         Ok(buffer)
     }
@@ -120,7 +125,7 @@ impl Serialize for Blockchain {
         let block_zero_owner_pk = *PublicKey::from_serialized(&data[2..35], &mut 0, &mut users)?;
         let mut block_zero_owner = User::new(block_zero_owner_pk);
         block_zero_owner
-            .give(TransactionValue::new_coin_transfer(BLOCK_ZERO_FEE, 0))
+            .give(TransactionValue::new_coin_transfer(BLOCK_ZERO_FEE, 0)?)
             .unwrap();
         if users
             .insert(block_zero_owner_pk, block_zero_owner)
@@ -153,12 +158,14 @@ impl Serialize for Blockchain {
         }
         Ok(*i - orig_i)
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
+impl DynamicSized for Blockchain {
+    fn serialized_len(&self) -> usize {
         let mut tmp_len = 0usize;
         for block in &self.blocks {
-            tmp_len += block.serialized_len()?;
+            tmp_len += Block::serialized_len();
         }
-        Ok(tmp_len)
+        tmp_len
     }
 }

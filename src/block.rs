@@ -1,34 +1,64 @@
 use crate::{
-    block_hash::BlockHash, magic::Magic, serialize::Serialize, transaction::TransactionBlock,
-    universal_id::UniversalId, user::User,
+    block_hash::BlockHash,
+    block_version::BlockVersion,
+    magic::Magic,
+    merkle_forest,
+    serialize::{Serialize, StaticSized},
+    user::User,
 };
-use merkle::MerkleTree;
+
 use secp256k1::PublicKey;
 use std::collections::HashMap;
 
+const BLOCK_TIME_SIZE: usize = 4;
+
+pub struct BlockTime {
+    value: [u8; BLOCK_TIME_SIZE],
+}
+
+impl Serialize for BlockTime {
+    fn from_serialized(
+        data: &[u8],
+        i: &mut usize,
+        users: &mut HashMap<PublicKey, User>,
+    ) -> Result<Box<Self>, String> {
+        todo!()
+    }
+
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        todo!()
+    }
+}
+
+impl StaticSized for BlockTime {
+    fn serialized_len() -> usize {
+        BLOCK_TIME_SIZE
+    }
+}
+
 pub struct Block {
-    transaction_blocks: MerkleTree<TransactionBlock>,
-    uid: UniversalId,
+    pub version: BlockVersion,
+    pub merkle_root: BlockHash,
     pub back_hash: BlockHash,
-    pub block_hash: BlockHash,
+    pub time: BlockTime,
     pub finder: PublicKey,
     pub magic: Magic,
 }
 
 impl Block {
     pub fn new(
-        transaction_blocks: MerkleTree<TransactionBlock>,
-        uid: UniversalId,
+        version: BlockVersion,
+        merkle_root: BlockHash,
         back_hash: BlockHash,
-        block_hash: BlockHash,
+        time: BlockTime,
         finder: PublicKey,
         magic: Magic,
     ) -> Block {
         Block {
-            transaction_blocks,
-            uid,
+            version,
+            merkle_root,
             back_hash,
-            block_hash,
+            time,
             finder,
             magic,
         }
@@ -49,71 +79,58 @@ impl Serialize for Block {
         mut i: &mut usize,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Block>, String> {
-        let mut transaction_blocks = Vec::new();
-        let mut uid;
-        loop {
-            let mut j = *i;
-            uid = *UniversalId::from_serialized(&data, &mut j, users)?;
-            if !uid.is_magic() {
-                let transaction = *TransactionBlock::from_serialized(&data, &mut i, users)?;
-                transaction_blocks.push(transaction);
-            } else {
-                break;
-            }
+        let bytes_left = data.len() - *i;
+        if bytes_left < Self::serialized_len() {
+            return Err(format!(
+                "Not enough bytes to deserialize block, found {} expected at least {}",
+                bytes_left,
+                Block::serialized_len()
+            ));
         }
-        *i += uid.serialized_len()?;
-        let back_hash = *BlockHash::from_serialized(&data, &mut i, users)?;
-        if !transaction_blocks.is_empty() && back_hash.is_zero_block() {
-            let zero_block_owner = transaction_blocks[0].transactions[0].to_pk;
-            for transaction_block in transaction_blocks.iter() {
-                for transaction in transaction_block.transactions.iter() {
-                    if transaction.to_pk == zero_block_owner {
-                        users
-                            .entry(zero_block_owner)
-                            .or_insert_with(|| User::new(zero_block_owner))
-                            .give(transaction.value)?;
-                    }
-                }
-            }
-        }
-        let finder = *PublicKey::from_serialized(&data, &mut i, users)?;
-        let magic = *Magic::from_serialized(&data, &mut i, users)?;
-        let t = MerkleTree::from_vec(&ring::digest::SHA256, transaction_blocks);
-        let root_hash = t.root_hash();
+        let version = *BlockVersion::from_serialized(data, i, users)?;
+        let merkle_root = *BlockHash::from_serialized(data, i, users)?;
+        let back_hash = *BlockHash::from_serialized(data, i, users)?;
+        let time = *BlockTime::from_serialized(data, i, users)?;
+        let finder = *PublicKey::from_serialized(data, i, users)?;
+        let magic = *Magic::from_serialized(data, i, users)?;
 
         Ok(Box::new(Block::new(
-            t,
-            uid,
+            version,
+            merkle_root,
             back_hash,
-            *BlockHash::from_serialized(&root_hash, &mut 0, &mut HashMap::new())?,
+            time,
             finder,
             magic,
         )))
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        let start_i = *i;
-        for transaction_block in self.transaction_blocks.iter() {
-            transaction_block.serialize_into(data, i)?;
+        let bytes_left = data.len() - *i;
+        if bytes_left < Block::serialized_len() {
+            return Err(format!(
+                "Not enough bytes left to serialize block, expected at least {} found {}",
+                Block::serialized_len(),
+                bytes_left
+            ));
         }
-        let uid = &mut UniversalId::new(false, true, self.magic.serialized_len()? as u16);
-        uid.serialize_into(data, i)?;
+        let start_i = *i;
+        self.version.serialize_into(data, i)?;
+        self.merkle_root.serialize_into(data, i)?;
         self.back_hash.serialize_into(data, i)?;
+        self.time.serialize_into(data, i)?;
         self.finder.serialize_into(data, i)?;
         self.magic.serialize_into(data, i)?;
         Ok(*i - start_i)
     }
+}
 
-    fn serialized_len(&self) -> Result<usize, String> {
-        let mut tmp_len = 0usize;
-        for transaction_block in &self.transaction_blocks {
-            tmp_len += transaction_block.serialized_len()?;
-        }
-        let len = tmp_len
-            + self.uid.serialized_len()?
-            + self.back_hash.serialized_len()?
-            + self.finder.serialized_len()?
-            + self.magic.serialized_len()?;
-        Ok(len)
+impl StaticSized for Block {
+    fn serialized_len() -> usize {
+        BlockVersion::serialized_len()
+            + merkle_forest::HASH_SIZE
+            + BlockHash::serialized_len()
+            + BlockTime::serialized_len()
+            + PublicKey::serialized_len()
+            + Magic::serialized_len()
     }
 }
