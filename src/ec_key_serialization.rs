@@ -6,7 +6,7 @@ use secp256k1::{PublicKey, SecretKey};
 use std::collections::HashMap;
 
 const PUBLIC_KEY_COMPRESSED_SIZE: usize = 32;
-const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 64;
+//const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 64;
 const SECRET_KEY_SIZE: usize = 32;
 
 impl Serialize for PublicKey {

@@ -106,9 +106,9 @@ impl TransactionBlock {
     }
 
     pub fn hash(&self) -> Result<[u8; 32], String> {
-        let data = vec![0; self.serialized_len()];
+        let mut data = vec![0; self.serialized_len()];
         self.serialize_into(&mut data, &mut 0)?;
-        let hash = [0; 32];
+        let mut hash = [0; 32];
         hash.copy_from_slice(&Sha256::digest(&data));
         Ok(hash)
     }
@@ -272,10 +272,7 @@ impl Serialize for TransactionBlock {
 }
 impl DynamicSized for TransactionBlock {
     fn serialized_len(&self) -> usize {
-        let mut tmp_len = 0;
-        for transaction in &self.transactions {
-            tmp_len += Transaction::serialized_len();
-        }
+        let mut tmp_len = Transaction::serialized_len() * self.transactions.len();
         for signature in self.signatures.iter() {
             tmp_len += signature.serialize_compact().len();
         }
@@ -283,10 +280,10 @@ impl DynamicSized for TransactionBlock {
     }
 }
 
-impl AsRef<[u8]> for TransactionBlock {
-    fn as_ref(&self) -> &[u8] {
-        let out = vec![0; self.serialized_len()];
-        self.serialize_into(&mut out, &mut 0);
-        out.as_slice()
-    }
-}
+// impl AsRef<[u8]> for TransactionBlock {
+//     fn as_ref(&self) -> &[u8] {
+//         let mut out = vec![0; self.serialized_len()];
+//         self.serialize_into(&mut out, &mut 0);
+//         out.as_slice()
+//     }
+// }

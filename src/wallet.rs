@@ -2,10 +2,13 @@ use crate::{
     blockchain::Blockchain,
     merkle_forest::MerkleForest,
     serialize::{DynamicSized, Serialize},
+    transaction::Transaction,
     transaction::TransactionBlock,
+    transaction_value::TransactionValue,
     user::User,
 };
 use secp256k1::{PublicKey, SecretKey};
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 pub struct Wallet {
     blockchain: Blockchain,
@@ -37,8 +40,8 @@ impl Wallet {
 
     pub fn from_binary(
         blockchain_bin: Vec<u8>,
-        transactions_bin: Vec<u8>,
-        nodes_bin: Vec<u8>,
+        branches_bin: Vec<u8>,
+        leafs_bin: Vec<u8>,
         pk_bin: Vec<u8>,
         sk_bin: Vec<u8>,
     ) -> Result<Self, String> {
@@ -50,9 +53,9 @@ impl Wallet {
         //     Ok(u) => current_uid = u,
         //     Err(_) => current_uid = UniversalId::new(false, 0),
         // }
-        let merkle_forest =
-            MerkleForest::from_serialized_transactions(&transactions_bin, &mut 0, &mut users)?;
-        merkle_forest.add_serialized_nodes(&nodes_bin);
+        let mut merkle_forest =
+            MerkleForest::from_serialized_transactions(&leafs_bin, &mut 0, &mut users)?;
+        merkle_forest.add_serialized_nodes(&branches_bin)?;
         Ok(Wallet {
             blockchain,
             //current_uid,
@@ -63,25 +66,25 @@ impl Wallet {
         })
     }
 
-    // pub fn send(&mut self, to_pk: PublicKey, value: TransactionValue) -> Result<Vec<u8>, String> {
-    //     match (self.pk, self.sk) {
-    //         (Some(pk), Some(sk)) => {
-    //             self.current_uid.increment();
-    //             let mut transaction_block = TransactionBlock::new(
-    //                 vec![Transaction::new(self.current_uid, pk, to_pk, value)],
-    //                 1,
-    //             );
-    //             transaction_block.sign(sk);
-    //             let mut buffer = vec![0u8; transaction_block.serialized_len()?];
-    //             transaction_block.serialize_into(&mut buffer, &mut 0)?;
-    //             self.transaction_blocks.push(transaction_block);
-    //             Ok(buffer)
-    //         }
-    //         _ => Err(String::from(
-    //             "Wallet must have both public key and secret key to send money",
-    //         )),
-    //     }
-    // }
+    pub fn send(&mut self, to_pk: PublicKey, value: TransactionValue) -> Result<Vec<u8>, String> {
+        match (self.pk, self.sk) {
+            (Some(pk), Some(sk)) => {
+                let mut self_user = self.get_self_user()?;
+                self_user.increment_uid();
+                let uid = self_user.get_uid_clone();
+                let mut transaction_block =
+                    TransactionBlock::new(vec![Transaction::new(uid, pk, to_pk, value)], 1);
+                transaction_block.sign(sk);
+                let mut buffer = vec![0u8; transaction_block.serialized_len()];
+                transaction_block.serialize_into(&mut buffer, &mut 0)?;
+                self.merkle_forest.add_leaf(transaction_block)?;
+                Ok(buffer)
+            }
+            _ => Err(String::from(
+                "Wallet must have both public key and secret key to send money",
+            )),
+        }
+    }
 
     // pub fn clear_transaction_blocks(&mut self) {
     //     self.transaction_blocks = Vec::new();
@@ -127,17 +130,19 @@ impl Wallet {
     //     Ok(total)
     // }
 
-    pub fn get_user_balance(
-        &mut self,
-        pk: PublicKey,
-        serialized_merkle_branches: Vec<u8>,
-        serialized_transactions: Vec<u8>,
-    ) -> Result<bool, Vec<[u8; 32]>> {
-        self.merkle_forest
-            .add_serialized_transactions(&serialized_transactions, &mut self.users);
-        self.merkle_forest
-            .add_serialized_nodes(&serialized_merkle_branches);
-        Ok(true)
+    pub fn convert_serialized_transactions(
+        data: &[u8],
+        users: &mut HashMap<secp256k1::PublicKey, crate::user::User>,
+    ) -> Result<Vec<TransactionBlock>, String> {
+        let mut transactions = Vec::new();
+        let mut i = 0;
+        while i < data.len() {
+            let pre_i = i;
+            let mut hash = [0; 32];
+            hash.copy_from_slice(Sha256::digest(&data[pre_i..i]).as_slice());
+            transactions.push(*TransactionBlock::from_serialized(&data, &mut i, users)?);
+        }
+        Ok(transactions)
     }
 
     // pub fn start_mining_thread<'a>(
@@ -289,12 +294,15 @@ impl Wallet {
         Ok(buffer)
     }
 
-    // pub fn get_balance(&self) -> Result<u32, String> {
-    //     match &self.pk {
-    //         Some(pk) => self.blockchain.get_user_value_change(*pk),
-    //         None => Err(String::from("Personal keyset not defined")),
-    //     }
-    // }
+    pub fn get_self_user(&self) -> Result<User, String> {
+        match self.pk {
+            Some(pk) => match self.users.get(&pk) {
+                Some(me) => Ok(me.clone()),
+                None => Err(String::from("Personal keyset not among users")),
+            },
+            None => Err(String::from("Personal keyset not defined")),
+        }
+    }
 
     pub fn load_public_key_from_file(
         public_key_file_location: &PathBuf,

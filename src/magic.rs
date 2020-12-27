@@ -12,11 +12,9 @@ pub struct Magic {
 
 impl Magic {
     pub fn new(data: u64) -> Magic {
-        let value = [0; MAGIC_LEN];
-        let i = 0;
+        let mut value = [0; MAGIC_LEN];
         for i in MAGIC_LEN - 1..0 {
-            value[i] = data as u8;
-            data >>= 8;
+            value[i] = (data >> 8 * i) as u8;
         }
         Magic { value }
     }

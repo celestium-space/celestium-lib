@@ -6,7 +6,6 @@ use crate::{
     serialize::{Serialize, StaticSized},
     user::User,
 };
-
 use secp256k1::PublicKey;
 use std::collections::HashMap;
 
@@ -20,13 +19,33 @@ impl Serialize for BlockTime {
     fn from_serialized(
         data: &[u8],
         i: &mut usize,
-        users: &mut HashMap<PublicKey, User>,
+        _: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Self>, String> {
-        todo!()
+        let bytes_left = data.len() - *i;
+        if bytes_left < Self::serialized_len() {
+            return Err(format!(
+                "Too few bytes left to make block time, expected at least {} got {}",
+                Self::serialized_len(),
+                bytes_left
+            ));
+        }
+        let mut value = [0; BLOCK_TIME_SIZE];
+        value.copy_from_slice(&data[*i..Self::serialized_len()]);
+        Ok(Box::new(BlockTime { value }))
     }
 
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        todo!()
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        let bytes_left = data.len() - *i;
+        if bytes_left < Self::serialized_len() {
+            return Err(format!(
+                "Too few bytes left to serialize block time, expected at least {} got {}",
+                Self::serialized_len(),
+                bytes_left
+            ));
+        }
+        data[*i..*i + Self::serialized_len()].copy_from_slice(&self.value);
+        *i += Self::serialized_len();
+        Ok(Self::serialized_len())
     }
 }
 
@@ -64,19 +83,19 @@ impl Block {
         }
     }
 
-    // pub fn get_user_value_change(&mut self, pk: &mut PublicKey) -> Result<i32, String> {
-    //     let mut tmp_value = 0;
+    // pub fn get_user_data_change(&mut self, pk: &mut PublicKey) -> Result<i32, String> {
+    //     let mut tmp_data = 0;
     //     for transaction_block in self.transaction_blocks.iter_mut() {
-    //         tmp_value += transaction_block.get_user_value_change(pk)?;
+    //         tmp_data += transaction_block.get_user_data_change(pk)?;
     //     }
-    //     Ok(tmp_value)
+    //     Ok(tmp_data)
     // }
 }
 
 impl Serialize for Block {
     fn from_serialized(
         data: &[u8],
-        mut i: &mut usize,
+        i: &mut usize,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Block>, String> {
         let bytes_left = data.len() - *i;
@@ -106,7 +125,7 @@ impl Serialize for Block {
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let bytes_left = data.len() - *i;
-        if bytes_left < Block::serialized_len() {
+        if bytes_left < Self::serialized_len() {
             return Err(format!(
                 "Not enough bytes left to serialize block, expected at least {} found {}",
                 Block::serialized_len(),

@@ -1,11 +1,11 @@
-use crate::magic::Magic;
+// use crate::magic::Magic;
 
-struct Miner {
-    my_serialized_block: Vec<u8>,
-    i: u64,
-    end: u64,
-    current_magic: Magic,
-}
+// struct Miner {
+//     my_serialized_block: Vec<u8>,
+//     i: u64,
+//     end: u64,
+//     current_magic: Magic,
+// }
 
 // impl Miner {
 //     pub fn new(serialized_block: Vec<u8>) -> Self {

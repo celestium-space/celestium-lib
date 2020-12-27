@@ -14,14 +14,14 @@ struct Node {
 
 impl Node {
     pub fn serialize(&self) -> [u8; HASH_SIZE * 2] {
-        let serialized = [0; HASH_SIZE * 2];
+        let mut serialized = [0; HASH_SIZE * 2];
         serialized[0..HASH_SIZE].copy_from_slice(&self.left);
         serialized[HASH_SIZE..HASH_SIZE * 2].copy_from_slice(&self.right);
         serialized
     }
 
     pub fn hash(&self) -> [u8; HASH_SIZE] {
-        let hash = [0; HASH_SIZE];
+        let mut hash = [0; HASH_SIZE];
         hash.copy_from_slice(Sha256::digest(&self.serialize()).as_slice());
         hash
     }
@@ -38,9 +38,9 @@ impl MerkleForest<TransactionBlock> {
         i: &mut usize,
         users: &mut HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Self, String> {
-        let leafs: HashMap<[u8; HASH_SIZE], TransactionBlock> = HashMap::new();
+        let mut leafs: HashMap<[u8; HASH_SIZE], TransactionBlock> = HashMap::new();
         while *i < data.len() {
-            let transaction = *TransactionBlock::from_serialized(&data, &mut i, users)?;
+            let transaction = *TransactionBlock::from_serialized(&data, i, users)?;
             leafs.insert(transaction.hash()?, transaction);
         }
         Ok(MerkleForest {
@@ -49,7 +49,7 @@ impl MerkleForest<TransactionBlock> {
         })
     }
 
-    pub fn add_serialized_nodes(&self, data: &[u8]) -> Result<bool, String> {
+    pub fn add_serialized_nodes(&mut self, data: &[u8]) -> Result<bool, String> {
         if data.len() % HASH_SIZE * 2 != 0 {
             return Err(format!(
                 "Data lenght {} is not devidable with node size of {}",
@@ -58,8 +58,8 @@ impl MerkleForest<TransactionBlock> {
             ));
         }
         for chunk in data.chunks(HASH_SIZE * 2) {
-            let left = [0; HASH_SIZE];
-            let right = [0; HASH_SIZE];
+            let mut left = [0; HASH_SIZE];
+            let mut right = [0; HASH_SIZE];
             left.copy_from_slice(&chunk[0..HASH_SIZE]);
             right.copy_from_slice(&data[HASH_SIZE..HASH_SIZE * 2]);
             let node = Node { left, right };
@@ -88,7 +88,7 @@ impl MerkleForest<TransactionBlock> {
         Ok(transactions)
     }
 
-    fn serialize_all_transactions(&self) -> Result<Vec<u8>, String> {
+    pub fn serialize_all_transactions(&self) -> Result<Vec<u8>, String> {
         let mut transaction_len = 0;
         for (_, transaction) in self.leafs.iter() {
             transaction_len += transaction.serialized_len();
@@ -101,24 +101,24 @@ impl MerkleForest<TransactionBlock> {
         Ok(serialized)
     }
 
-    fn serialize_all_nodes(&self) -> Result<Vec<u8>, String> {
-        let serialized = vec![0; self.nodes.len() * HASH_SIZE * 2];
+    pub fn serialize_all_nodes(&self) -> Result<Vec<u8>, String> {
+        let mut serialized = vec![0; self.nodes.len() * HASH_SIZE * 2];
         let i = 0;
-        for node in self.nodes {
+        for node in self.nodes.iter() {
             serialized[i..HASH_SIZE].copy_from_slice(&node.1.serialize());
         }
         Ok(serialized)
     }
 
-    fn get_transactions(
+    pub fn get_transactions(
         &self,
         hashes: Vec<[u8; 32]>,
-    ) -> Result<Vec<TransactionBlock>, (Vec<TransactionBlock>, Vec<[u8; 32]>)> {
-        let missing = Vec::new();
-        let found = Vec::new();
+    ) -> Result<Vec<&TransactionBlock>, (Vec<&TransactionBlock>, Vec<[u8; 32]>)> {
+        let mut missing = Vec::new();
+        let mut found = Vec::new();
         for hash in hashes {
             match self.leafs.get(&hash) {
-                Some(leaf) => found.push(*leaf),
+                Some(leaf) => found.push(leaf),
                 None => missing.push(hash),
             }
         }
@@ -129,29 +129,39 @@ impl MerkleForest<TransactionBlock> {
         }
     }
 
-    fn is_ancestor(
+    pub fn is_ancestor(
         &self,
-        decendant: TransactionBlock,
+        descendant: &TransactionBlock,
         ancestor: [u8; 32],
-    ) -> Result<TransactionBlock, Vec<[u8; 32]>> {
+    ) -> Result<&TransactionBlock, Vec<[u8; 32]>> {
         let current_hash = ancestor;
         let tmp_node = self.nodes.get(&current_hash);
         match tmp_node {
             Some(node) => {
-                let errs;
-                match self.is_ancestor(decendant, node.left) {
+                let mut errs;
+                match self.is_ancestor(descendant, node.left) {
                     Ok(left) => return Ok(left),
                     Err(e) => errs = e,
                 };
-                match self.is_ancestor(decendant, node.right) {
+                match self.is_ancestor(descendant, node.right) {
                     Ok(right) => return Ok(right),
-                    Err(e) => errs.append(&mut e),
+                    Err(mut e) => errs.append(&mut e),
                 };
                 Err(errs)
             }
             None => match self.leafs.get(&current_hash) {
-                Some(result) => Ok(*result),
+                Some(result) => Ok(result),
                 None => Err(vec![current_hash]),
+            },
+        }
+    }
+
+    pub fn add_leaf(&mut self, leaf: TransactionBlock) -> Result<bool, String> {
+        match self.leafs.get(&leaf.hash()?) {
+            Some(_) => Err(String::from("Leaf already exists")),
+            None => match self.leafs.insert(leaf.hash()?, leaf) {
+                Some(_) => Err(String::from("Could not insert leaf")),
+                None => Ok(true),
             },
         }
     }
@@ -168,7 +178,7 @@ impl MerkleForest<TransactionBlock> {
     //     self.nodes.get(hash)
     // }
 
-    fn is_complete(&self, root: [u8; HASH_SIZE]) -> Result<usize, String> {
+    pub fn is_complete(&self, root: [u8; HASH_SIZE]) -> Result<usize, String> {
         let found_node = self.nodes.get(&root);
         let found_leaf = self.leafs.get(&root);
         match (found_node, found_leaf) {
@@ -181,8 +191,8 @@ impl MerkleForest<TransactionBlock> {
                     Err("Unbalanced Merkle tree".to_string())
                 }
             }
-            (None, Some(found_leaf)) => Ok(0),
-            _ => Err(format!("Missing node with hash {:?}", root)),
+            (None, Some(_)) => Ok(0),
+            _ => Err(format!("Missing node with hash  {:?}", root)),
         }
     }
 }

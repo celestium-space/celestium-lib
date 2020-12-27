@@ -2,6 +2,7 @@ use crate::{transaction_value::TransactionValue, universal_id::UniversalId};
 use secp256k1::PublicKey;
 use std::fmt;
 
+#[derive(Clone)]
 pub struct User {
     pk: PublicKey,
     current_uid: UniversalId,
@@ -23,8 +24,12 @@ impl User {
         self.current_balance
     }
 
-    pub fn get_uid(&self) -> UniversalId {
-        self.current_uid
+    pub fn get_uid_clone(&self) -> UniversalId {
+        self.current_uid.clone()
+    }
+
+    pub fn increment_uid(&mut self) {
+        self.current_uid.increment();
     }
 
     pub fn give(&mut self, value: TransactionValue) -> Result<bool, String> {

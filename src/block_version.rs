@@ -1,32 +1,47 @@
-use crate::serialize::{Serialize, StaticSized};
+use crate::{
+    serialize::{Serialize, StaticSized},
+    user::User,
+};
+use secp256k1::PublicKey;
+use std::collections::HashMap;
 
 const BLOCK_VERSION_LEN: usize = 4;
 
 pub struct BlockVersion {
-    value: u32,
+    value: [u8; BLOCK_VERSION_LEN],
 }
 
 impl Serialize for BlockVersion {
     fn from_serialized(
         data: &[u8],
         i: &mut usize,
-        users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
+        _: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Self>, String> {
         let bytes_left = data.len() - *i;
-        if bytes_left < BLOCK_VERSION_LEN {
+        if bytes_left < Self::serialized_len() {
             return Err(format!(
                 "Too few bytes left for parsing block version, expected at least {} got {}",
-                bytes_left, BLOCK_VERSION_LEN
+                Self::serialized_len(),
+                bytes_left
             ));
         }
-        let bytes = [0; BLOCK_VERSION_LEN];
-        bytes.copy_from_slice(&data[*i..BLOCK_VERSION_LEN]);
-        let value = u32::from_be_bytes(bytes);
+        let mut value = [0; BLOCK_VERSION_LEN];
+        value.copy_from_slice(&data[*i..Self::serialized_len()]);
         Ok(Box::new(BlockVersion { value }))
     }
 
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        todo!()
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        let bytes_left = data.len() - *i;
+        if bytes_left < Self::serialized_len() {
+            return Err(format!(
+                "Too few bytes left to serialize block version, expected at least {} got {}",
+                Self::serialized_len(),
+                bytes_left
+            ));
+        }
+        data[*i..*i + Self::serialized_len()].copy_from_slice(&self.value);
+        *i += Self::serialized_len();
+        Ok(Self::serialized_len())
     }
 }
 

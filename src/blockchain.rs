@@ -108,7 +108,7 @@ impl Blockchain {
         block: Vec<u8>,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Vec<u8>, String> {
-        let block = *Block::from_serialized(&block, &mut 0, &mut users)?;
+        let block = *Block::from_serialized(&block, &mut 0, users)?;
         self.blocks.push(block);
         let mut buffer = vec![0u8; self.serialized_len()];
         self.serialize_into(&mut buffer, &mut 0)?;
@@ -122,7 +122,7 @@ impl Serialize for Blockchain {
         i: &mut usize,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Blockchain>, String> {
-        let block_zero_owner_pk = *PublicKey::from_serialized(&data[2..35], &mut 0, &mut users)?;
+        let block_zero_owner_pk = *PublicKey::from_serialized(&data[2..35], &mut 0, users)?;
         let mut block_zero_owner = User::new(block_zero_owner_pk);
         block_zero_owner
             .give(TransactionValue::new_coin_transfer(BLOCK_ZERO_FEE, 0)?)
@@ -133,8 +133,7 @@ impl Serialize for Blockchain {
         {
             return Err("Unexpected: Block zero user already exists in system".to_string());
         }
-        let mut i = 0;
-        let blocks = Blockchain::parse_blocks(data, &mut i, &mut users)?;
+        let blocks = Blockchain::parse_blocks(data, i, users)?;
         Ok(Box::new(Blockchain::new(blocks)))
     }
 
@@ -162,10 +161,6 @@ impl Serialize for Blockchain {
 
 impl DynamicSized for Blockchain {
     fn serialized_len(&self) -> usize {
-        let mut tmp_len = 0usize;
-        for block in &self.blocks {
-            tmp_len += Block::serialized_len();
-        }
-        tmp_len
+        self.blocks.len() * Block::serialized_len()
     }
 }
