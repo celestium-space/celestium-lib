@@ -1,5 +1,5 @@
 use crate::{
-    serialize::{DynamicSized, Serialize},
+    serialize::{DynamicSized, Serialize, StaticSized},
     transaction_value::TransactionValue,
 };
 use secp256k1::PublicKey;
@@ -35,16 +35,20 @@ impl Serialize for TransactionOutput {
         _i: &mut usize,
         _users: &mut std::collections::HashMap<PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
+        println!("TransactionOutput from_serialized");
         todo!()
     }
 
-    fn serialize_into(&self, _data: &mut [u8], _i: &mut usize) -> Result<usize, String> {
-        todo!()
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        let pre_i = *i;
+        self.value.serialize_into(data, i)?;
+        self.pk.serialize_into(data, i)?;
+        Ok(*i - pre_i)
     }
 }
 
 impl DynamicSized for TransactionOutput {
     fn serialized_len(&self) -> usize {
-        todo!()
+        self.value.serialized_len() + PublicKey::serialized_len()
     }
 }

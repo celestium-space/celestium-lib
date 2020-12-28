@@ -14,8 +14,8 @@ pub struct Magic {
 impl Magic {
     pub fn new(data: u64) -> Magic {
         let mut value = [0; MAGIC_LEN];
-        for i in 0..(MAGIC_LEN - 1) {
-            value[i] = (data >> (8 * i)) as u8;
+        for (i, item) in value.iter_mut().enumerate().take(MAGIC_LEN - 1) {
+            *item = (data >> (8 * i)) as u8;
         }
         Magic { value }
     }

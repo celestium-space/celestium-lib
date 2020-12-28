@@ -43,7 +43,7 @@ impl Miner {
         let magic = Magic::new(0);
         let block = Block::new(version, merkle_root, back_hash, time, magic);
         let mut block_serialized = vec![0u8; Block::serialized_len()];
-        block.serialize_into(&mut block_serialized, &mut 0);
+        block.serialize_into(&mut block_serialized, &mut 0)?;
         Ok(Miner::new(block_serialized))
     }
 
@@ -61,7 +61,7 @@ impl Miner {
         }
     }
 
-    pub fn do_work(&mut self) -> Poll<Option<Magic>> {
+    pub fn do_work(&mut self) -> Poll<Option<Block>> {
         self.current_magic.increase();
         self.i += 1;
         let mut magic_start = self.my_serialized_block.len() - Magic::serialized_len();
@@ -78,7 +78,10 @@ impl Miner {
         )
         .unwrap();
         if hash.contains_enough_work() {
-            Poll::Ready(Some(self.current_magic.clone()))
+            let block =
+                *Block::from_serialized(&self.my_serialized_block, &mut 0, &mut HashMap::new())
+                    .unwrap();
+            Poll::Ready(Some(block))
         } else if self.i < self.end {
             Poll::Pending
         } else {
@@ -88,9 +91,9 @@ impl Miner {
 }
 
 impl Future for Miner {
-    fn poll(mut self: std::pin::Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Magic>> {
+    fn poll(mut self: std::pin::Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Block>> {
         self.do_work()
     }
 
-    type Output = Option<Magic>;
+    type Output = Option<Block>;
 }

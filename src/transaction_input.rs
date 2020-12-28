@@ -52,10 +52,12 @@ impl Serialize for TransactionInput {
         _i: &mut usize,
         _users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
+        println!("TransactionInput from_serialized");
         todo!()
     }
 
     fn serialize_into(&self, _data: &mut [u8], _i: &mut usize) -> Result<usize, String> {
+        println!("TransactionInput serialize_into");
         todo!()
     }
 }

@@ -22,11 +22,15 @@ pub struct TransactionValue {
 impl TransactionValue {
     pub fn new_coin_transfer(value: u128, fee: u128) -> Result<Self, String> {
         let mut self_value = [0; TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN];
-        for i in 0..(TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN) {
+        for (i, item) in self_value
+            .iter_mut()
+            .enumerate()
+            .take(TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN)
+        {
             if i < TRANSACTION_VALUE_LEN {
-                self_value[i] = (value >> ((TRANSACTION_VALUE_LEN - 1 - i) * 8)) as u8;
+                *item = (value >> ((TRANSACTION_VALUE_LEN - 1 - i) * 8)) as u8;
             } else {
-                self_value[i] =
+                *item =
                     (fee >> (((TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN) - 1 - i) * 8)) as u8;
             }
         }

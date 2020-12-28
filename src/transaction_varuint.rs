@@ -41,11 +41,21 @@ impl Serialize for TransactionVarUint {
         _i: &mut usize,
         _users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
+        println!("TransactionVarUint from_serialized");
         todo!()
     }
 
-    fn serialize_into(&self, _data: &mut [u8], _i: &mut usize) -> Result<usize, String> {
-        todo!()
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        let bytes_left = data.len() - *i;
+        if bytes_left < self.serialized_len() {
+            return Err(format!(
+                "Too few bytes left for serializing transaction variable uint, expected at least {} got {}",
+                self.serialized_len(),
+                bytes_left
+            ));
+        }
+        data[*i..*i + self.serialized_len()].copy_from_slice(&self.value);
+        Ok(self.serialized_len())
     }
 }
 

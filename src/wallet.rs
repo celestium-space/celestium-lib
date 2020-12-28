@@ -170,6 +170,7 @@ impl Wallet {
                     self.unspent_outputs.retain(|x| !used_outputs.contains(&x));
                     Ok(serialized_transaction)
                 } else {
+                    println!("else");
                     todo!()
                 }
             }
