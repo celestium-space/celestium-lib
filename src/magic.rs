@@ -6,6 +6,7 @@ use std::{
 
 const MAGIC_LEN: usize = 8;
 
+#[derive(Clone)]
 pub struct Magic {
     pub value: [u8; MAGIC_LEN],
 }
@@ -13,8 +14,8 @@ pub struct Magic {
 impl Magic {
     pub fn new(data: u64) -> Magic {
         let mut value = [0; MAGIC_LEN];
-        for i in MAGIC_LEN - 1..0 {
-            value[i] = (data >> 8 * i) as u8;
+        for i in 0..(MAGIC_LEN - 1) {
+            value[i] = (data >> (8 * i)) as u8;
         }
         Magic { value }
     }

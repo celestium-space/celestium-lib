@@ -1,5 +1,6 @@
 use crate::{
-    serialize::{Serialize, StaticSized},
+    serialize::{DynamicSized, Serialize},
+    transaction_varuint::TransactionVarUint,
     user::User,
 };
 use secp256k1::PublicKey;
@@ -8,81 +9,79 @@ use std::{
     fmt::{self, Display, Formatter},
 };
 
-const TRANSACTION_TOTAL_LEN: usize = 16;
-const TRANSACTION_ID_LEN: usize = TRANSACTION_TOTAL_LEN;
-const TRANSACTION_FEE_LEN: usize = 8;
-const TRANSACTION_VALUE_LEN: usize = TRANSACTION_TOTAL_LEN - TRANSACTION_FEE_LEN;
+const TRANSACTION_ID_LEN: usize = TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
+const TRANSACTION_FEE_LEN: usize = 16;
+const TRANSACTION_VALUE_LEN: usize = 16;
 
-pub enum TransactionValueType {
-    Coin,
-    ID,
-}
-
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct TransactionValue {
-    value: [u8; TRANSACTION_TOTAL_LEN],
+    version: TransactionVarUint,
+    value: [u8; TRANSACTION_ID_LEN],
 }
 
 impl TransactionValue {
-    pub fn new_coin_transfer(value: u64, fee: u64) -> Result<Self, String> {
-        let mut self_value = [0; TRANSACTION_TOTAL_LEN];
-        for i in 0..Self::serialized_len() {
-            if i < TRANSACTION_FEE_LEN {
-                self_value[i] = (fee >> ((TRANSACTION_FEE_LEN - 1 - i) * 8)) as u8;
+    pub fn new_coin_transfer(value: u128, fee: u128) -> Result<Self, String> {
+        let mut self_value = [0; TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN];
+        for i in 0..(TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN) {
+            if i < TRANSACTION_VALUE_LEN {
+                self_value[i] = (value >> ((TRANSACTION_VALUE_LEN - 1 - i) * 8)) as u8;
             } else {
                 self_value[i] =
-                    (value >> (((TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN) - 1 - i) * 8)) as u8;
+                    (fee >> (((TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN) - 1 - i) * 8)) as u8;
             }
         }
-        let tv = TransactionValue { value: self_value };
+        let tv = TransactionValue {
+            version: TransactionVarUint::from_usize(0),
+            value: self_value,
+        };
         if tv.is_coin_transfer() {
             Ok(tv)
         } else {
-            Err("First bit in fee cannot be set (sign bit) for coin transfers".to_string())
+            Err(format!(
+                "Sanity check failed, expected transaction value version {} got {}",
+                0,
+                tv.version.get_value()
+            ))
         }
     }
 
     pub fn is_coin_transfer(&self) -> bool {
-        self.value[0] & 0x80 == 0
+        self.version.get_value() == 0
     }
 
-    pub fn get_value(&self) -> Result<u64, String> {
+    pub fn get_value(&self) -> Result<u128, String> {
         if self.is_coin_transfer() {
-            let mut value: u64 = 0;
+            let mut value: u128 = 0;
+            for (i, byte) in self.value[0..TRANSACTION_VALUE_LEN].iter().enumerate() {
+                value += (*byte as u128) << ((TRANSACTION_VALUE_LEN - 1 - i) * 8);
+            }
+            Ok(value)
+        } else {
+            Err(String::from(
+                "Cannot get transaction value: Transaction is not coin transfer",
+            ))
+        }
+    }
+    pub fn get_fee(&self) -> Result<u128, String> {
+        if self.is_coin_transfer() {
+            let mut fee: u128 = 0;
             for (i, byte) in self.value
-                [TRANSACTION_TOTAL_LEN - TRANSACTION_VALUE_LEN - 1..TRANSACTION_TOTAL_LEN]
+                [TRANSACTION_VALUE_LEN..TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN]
                 .iter()
                 .enumerate()
             {
-                value += (*byte as u64) << ((TRANSACTION_VALUE_LEN - 1 - i) * 8);
+                fee += (*byte as u128) << ((TRANSACTION_FEE_LEN - 1 - i) * 8);
             }
-            Ok(value)
+            Ok(fee)
         } else {
             Err(String::from(
                 "Cannot get transaction value: Transaction is not coin transfer",
             ))
         }
     }
-    pub fn get_fee(&self) -> Result<u64, String> {
-        if self.is_coin_transfer() {
-            let mut value: u64 = 0;
-            for (i, byte) in self.value[0..TRANSACTION_FEE_LEN].iter().enumerate() {
-                value += (*byte as u64) << ((TRANSACTION_FEE_LEN - 1 - i) * 8);
-            }
-            Ok(value)
-        } else {
-            Err(String::from(
-                "Cannot get transaction value: Transaction is not coin transfer",
-            ))
-        }
-    }
-    pub fn get_id(self) -> Result<u128, String> {
+    pub fn get_id(&self) -> Result<[u8; TRANSACTION_ID_LEN], String> {
         if !self.is_coin_transfer() {
-            let mut value: u128 = 0;
-            for (i, byte) in self.value[0..TRANSACTION_ID_LEN].iter().enumerate() {
-                value += (*byte as u128) << ((TRANSACTION_ID_LEN - 1 - i) * 8);
-            }
-            Ok(value)
+            Ok(self.value)
         } else {
             Err(String::from(
                 "Cannot get transaction ID: Transaction not ID transfer",
@@ -101,7 +100,7 @@ impl Display for TransactionValue {
                 self.get_fee().unwrap()
             )
         } else {
-            write!(f, "{}ID", self.get_id().unwrap())
+            write!(f, "{:?}ID", self.get_id().unwrap())
         }
     }
 }
@@ -112,34 +111,36 @@ impl Serialize for TransactionValue {
         i: &mut usize,
         _: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<TransactionValue>, String> {
+        let version = *TransactionVarUint::from_serialized(data, i, &mut HashMap::new())?;
         let bytes_left = data.len() - *i;
-        if bytes_left < Self::serialized_len() {
+        if bytes_left < TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN {
             return Err(format!(
                 "Too few bytes left to make transaction value, expected at least {} got {}",
-                Self::serialized_len(),
+                TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN,
                 bytes_left
             ));
         }
-        let mut value = [0; TRANSACTION_TOTAL_LEN];
-        value.copy_from_slice(&data[*i..*i + Self::serialized_len()]);
-        Ok(Box::new(TransactionValue { value }))
+        let mut value = [0; TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN];
+        value.copy_from_slice(&data[*i..*i + TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN]);
+        Ok(Box::new(TransactionValue { version, value }))
     }
+
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
         let bytes_left = data.len() - *i;
-        if bytes_left < Self::serialized_len() {
+        if bytes_left < self.serialized_len() {
             return Err(format!(
                 "Too few bytes left to serialize transaction value into, expected at least {} got {}",
-                Self::serialized_len(), bytes_left
+                self.serialized_len(), bytes_left
             ));
         }
-        data[*i..*i + Self::serialized_len()].copy_from_slice(&self.value);
-        *i += Self::serialized_len();
-        Ok(Self::serialized_len())
+        data[*i..*i + self.serialized_len()].copy_from_slice(&self.value);
+        *i += self.serialized_len();
+        Ok(self.serialized_len())
     }
 }
 
-impl StaticSized for TransactionValue {
-    fn serialized_len() -> usize {
-        TRANSACTION_TOTAL_LEN
+impl DynamicSized for TransactionValue {
+    fn serialized_len(&self) -> usize {
+        self.version.serialized_len() + TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN
     }
 }

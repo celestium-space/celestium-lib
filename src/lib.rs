@@ -8,8 +8,11 @@ pub mod merkle_forest;
 pub mod miner;
 pub mod serialize;
 pub mod transaction;
+pub mod transaction_input;
+pub mod transaction_output;
 pub mod transaction_value;
-pub mod universal_id;
+pub mod transaction_varuint;
+pub mod transaction_version;
 pub mod user;
 pub mod wallet;
 

@@ -7,12 +7,51 @@ use crate::{
     user::User,
 };
 use secp256k1::PublicKey;
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::{cmp::Ordering, collections::HashMap, time::SystemTime};
 
 const BLOCK_TIME_SIZE: usize = 4;
 
+#[derive(Clone)]
 pub struct BlockTime {
     value: [u8; BLOCK_TIME_SIZE],
+}
+
+impl BlockTime {
+    pub fn now() -> Self {
+        let secs_since_epoc = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut value = [0; BLOCK_TIME_SIZE];
+        value[0] = (secs_since_epoc >> 24) as u8;
+        value[1] = (secs_since_epoc >> 16) as u8;
+        value[2] = (secs_since_epoc >> 8) as u8;
+        value[3] = secs_since_epoc as u8;
+        BlockTime { value }
+    }
+}
+
+impl Ord for BlockTime {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+
+impl Eq for BlockTime {
+    fn assert_receiver_is_total_eq(&self) {}
+}
+
+impl PartialOrd for BlockTime {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for BlockTime {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
 }
 
 impl Serialize for BlockTime {
@@ -60,7 +99,6 @@ pub struct Block {
     pub merkle_root: BlockHash,
     pub back_hash: BlockHash,
     pub time: BlockTime,
-    pub finder: PublicKey,
     pub magic: Magic,
 }
 
@@ -70,7 +108,6 @@ impl Block {
         merkle_root: BlockHash,
         back_hash: BlockHash,
         time: BlockTime,
-        finder: PublicKey,
         magic: Magic,
     ) -> Block {
         Block {
@@ -78,9 +115,16 @@ impl Block {
             merkle_root,
             back_hash,
             time,
-            finder,
             magic,
         }
+    }
+
+    pub fn hash(&self) -> [u8; 32] {
+        let mut hash = [0u8; 32];
+        let mut self_serialized = vec![0u8; Block::serialized_len()];
+        self.serialize_into(&mut self_serialized, &mut 0).unwrap();
+        hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
+        hash
     }
 
     // pub fn get_user_data_change(&mut self, pk: &mut PublicKey) -> Result<i32, String> {
@@ -110,7 +154,6 @@ impl Serialize for Block {
         let merkle_root = *BlockHash::from_serialized(data, i, users)?;
         let back_hash = *BlockHash::from_serialized(data, i, users)?;
         let time = *BlockTime::from_serialized(data, i, users)?;
-        let finder = *PublicKey::from_serialized(data, i, users)?;
         let magic = *Magic::from_serialized(data, i, users)?;
 
         Ok(Box::new(Block::new(
@@ -118,7 +161,6 @@ impl Serialize for Block {
             merkle_root,
             back_hash,
             time,
-            finder,
             magic,
         )))
     }
@@ -137,7 +179,6 @@ impl Serialize for Block {
         self.merkle_root.serialize_into(data, i)?;
         self.back_hash.serialize_into(data, i)?;
         self.time.serialize_into(data, i)?;
-        self.finder.serialize_into(data, i)?;
         self.magic.serialize_into(data, i)?;
         Ok(*i - start_i)
     }

@@ -11,6 +11,14 @@ pub struct BlockVersion {
     value: [u8; BLOCK_VERSION_LEN],
 }
 
+impl BlockVersion {
+    pub fn default() -> Self {
+        BlockVersion {
+            value: [0; BLOCK_VERSION_LEN],
+        }
+    }
+}
+
 impl Serialize for BlockVersion {
     fn from_serialized(
         data: &[u8],

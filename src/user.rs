@@ -1,35 +1,25 @@
-use crate::{transaction_value::TransactionValue, universal_id::UniversalId};
+use crate::transaction_value::TransactionValue;
 use secp256k1::PublicKey;
 use std::fmt;
 
 #[derive(Clone)]
 pub struct User {
     pk: PublicKey,
-    current_uid: UniversalId,
-    current_balance: u64,
-    ids: Vec<u128>,
+    current_balance: u128,
+    ids: Vec<[u8; 32]>,
 }
 
 impl User {
     pub fn new(pk: PublicKey) -> User {
         User {
             pk,
-            current_uid: UniversalId::new(false, 0),
             current_balance: 0,
             ids: Vec::new(),
         }
     }
 
-    pub fn get_balance(&self) -> u64 {
+    pub fn get_balance(&self) -> u128 {
         self.current_balance
-    }
-
-    pub fn get_uid_clone(&self) -> UniversalId {
-        self.current_uid.clone()
-    }
-
-    pub fn increment_uid(&mut self) {
-        self.current_uid.increment();
     }
 
     pub fn give(&mut self, value: TransactionValue) -> Result<bool, String> {
@@ -41,7 +31,7 @@ impl User {
                 self.ids.push(tmp_id);
             } else {
                 return Err(format!(
-                    "Trying to give user with pk {:?} the ID {}, which they already own",
+                    "Trying to give user with pk {:?} the ID {:?}, which they already own",
                     self.pk, tmp_id
                 ));
             }
@@ -62,12 +52,11 @@ impl User {
                 self.ids.push(tmp_id);
             } else {
                 return Err(format!(
-                    "Trying to take unowned id {} from user with pk {:?}",
+                    "Trying to take unowned id {:?} from user with pk {:?}",
                     tmp_id, self.pk,
                 ));
             }
         }
-        self.current_uid.increment();
         Ok(true)
     }
 }

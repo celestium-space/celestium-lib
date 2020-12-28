@@ -1,18 +1,17 @@
 use crate::{
-    block::Block,
+    block::{Block, BlockTime},
     block_hash::BlockHash,
+    block_version::BlockVersion,
     magic::Magic,
     serialize::{DynamicSized, Serialize, StaticSized},
-    transaction::TransactionBlock,
     transaction_value::TransactionValue,
-    universal_id::UniversalId,
     user::User,
 };
 use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-const BLOCK_ZERO_FEE: u64 = u64::MAX;
+const BLOCK_ZERO_FEE: u128 = u128::MAX;
 
 pub struct Blockchain {
     blocks: Vec<Block>,
@@ -56,16 +55,19 @@ impl Blockchain {
         }
         Ok(tmp_blocks)
     }
-
-    pub fn create_unmined_block(
-        &self,
-        transaction_blocks: &[TransactionBlock],
-        finder_pk: PublicKey,
-    ) -> Result<Vec<u8>, String> {
-        let mut transaction_blocks_len = 0;
-        for transaction_block in transaction_blocks.iter() {
-            transaction_blocks_len += transaction_block.serialized_len();
+    pub fn get_block_time(&self, hash: [u8; 32]) -> Result<BlockTime, String> {
+        for block in self.blocks.iter() {
+            if block.hash() == hash {
+                return Ok(block.time.clone());
+            }
         }
+        Err(format!(
+            "Block with hash {:?} not found in blockchain",
+            hash
+        ))
+    }
+
+    pub fn create_unmined_block(&self, merkle_root: BlockHash) -> Result<Vec<u8>, String> {
         let back_hash;
         if !self.blocks.is_empty() {
             let mut last_block_serialized = vec![0; Block::serialized_len()];
@@ -74,33 +76,24 @@ impl Blockchain {
                 .last()
                 .unwrap()
                 .serialize_into(&mut last_block_serialized, &mut i)?;
-            back_hash = BlockHash::from_serialized(
+            back_hash = *BlockHash::from_serialized(
                 &Sha256::digest(&last_block_serialized[..i]),
                 &mut 0,
                 &mut HashMap::new(),
             )?;
         } else {
-            back_hash = Box::new(BlockHash::default());
+            back_hash = BlockHash::default();
         }
-        let magic = Magic::new(0);
-        let uid = UniversalId::new(false, Magic::serialized_len() as u16);
-        let mut unmined_block = vec![
-            0;
-            transaction_blocks_len
-                + UniversalId::serialized_len()
-                + BlockHash::serialized_len()
-                + PublicKey::serialized_len()
-                + Magic::serialized_len()
-        ];
-        let mut i = 0;
-        for transaction_block in transaction_blocks.iter() {
-            transaction_block.serialize_into(&mut unmined_block, &mut i)?;
-        }
-        uid.serialize_into(&mut unmined_block, &mut i)?;
-        back_hash.serialize_into(&mut unmined_block, &mut i)?;
-        finder_pk.serialize_into(&mut unmined_block, &mut i)?;
-        magic.serialize_into(&mut unmined_block, &mut i)?;
-        Ok(unmined_block.to_vec())
+        let unmined_block = Block::new(
+            BlockVersion::default(),
+            merkle_root,
+            back_hash,
+            BlockTime::now(),
+            Magic::new(0),
+        );
+        let mut unmined_serialized_block = vec![0u8; Block::serialized_len()];
+        unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0)?;
+        Ok(unmined_serialized_block)
     }
 
     pub fn add_serialized_block(
