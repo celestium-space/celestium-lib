@@ -64,12 +64,12 @@ impl Miner {
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
         self.current_magic.increase();
         self.i += 1;
-        let mut magic_start = self.my_serialized_block.len() - Magic::serialized_len();
+        let mut magic_start = self.my_serialized_block.len() - Magic::serialized_len() - 1;
         let mut serialized_magic = vec![0u8; Magic::serialized_len()];
         self.current_magic
-            .serialize_into(&mut serialized_magic, &mut magic_start)
+            .serialize_into(&mut serialized_magic, &mut 0)
             .unwrap();
-        self.my_serialized_block[magic_start..Magic::serialized_len()]
+        self.my_serialized_block[magic_start..magic_start + Magic::serialized_len()]
             .copy_from_slice(&serialized_magic);
         let hash = *BlockHash::from_serialized(
             Sha256::digest(&self.my_serialized_block).as_slice(),

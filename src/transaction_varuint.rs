@@ -16,6 +16,9 @@ impl TransactionVarUint {
     }
 
     pub fn from_usize(value: usize) -> Self {
+        if value == 0 {
+            return TransactionVarUint { value: vec![0u8] };
+        }
         let mut tmp_value = value;
         let mut bytes = Vec::new();
         while tmp_value > 0 {
@@ -37,12 +40,17 @@ impl PartialEq for TransactionVarUint {
 
 impl Serialize for TransactionVarUint {
     fn from_serialized(
-        _data: &[u8],
-        _i: &mut usize,
-        _users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
+        data: &[u8],
+        i: &mut usize,
+        _: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
-        println!("TransactionVarUint from_serialized");
-        todo!()
+        let pre_i = *i;
+        while data[*i] > 0x7 {
+            *i += 1;
+        }
+        let mut value = vec![0u8; *i - pre_i];
+        value.copy_from_slice(&data[pre_i..*i]);
+        Ok(Box::new(TransactionVarUint { value }))
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
@@ -55,6 +63,7 @@ impl Serialize for TransactionVarUint {
             ));
         }
         data[*i..*i + self.serialized_len()].copy_from_slice(&self.value);
+        *i += self.serialized_len();
         Ok(self.serialized_len())
     }
 }

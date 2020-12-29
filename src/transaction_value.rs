@@ -137,8 +137,9 @@ impl Serialize for TransactionValue {
                 self.serialized_len(), bytes_left
             ));
         }
-        data[*i..*i + self.serialized_len()].copy_from_slice(&self.value);
-        *i += self.serialized_len();
+        self.version.serialize_into(data, i)?;
+        data[*i..*i + TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN].copy_from_slice(&self.value);
+        *i += TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
         Ok(self.serialized_len())
     }
 }

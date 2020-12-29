@@ -69,7 +69,8 @@ impl Serialize for BlockTime {
             ));
         }
         let mut value = [0; BLOCK_TIME_SIZE];
-        value.copy_from_slice(&data[*i..Self::serialized_len()]);
+        value.copy_from_slice(&data[*i..*i + Self::serialized_len()]);
+        *i += Self::serialized_len();
         Ok(Box::new(BlockTime { value }))
     }
 
