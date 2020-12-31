@@ -4,6 +4,7 @@ use crate::{
     user::User,
 };
 use secp256k1::PublicKey;
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fmt::{self, Display, Formatter},
@@ -49,8 +50,30 @@ impl TransactionValue {
         }
     }
 
+    pub fn new_id_transfer(data: Vec<u8>) -> Result<Self, String> {
+        let mut value = [0; TRANSACTION_ID_LEN];
+        value.copy_from_slice(Sha256::digest(&data).as_slice());
+        let tv = TransactionValue {
+            version: TransactionVarUint::from_usize(1),
+            value,
+        };
+        if tv.is_id_transfer() {
+            Ok(tv)
+        } else {
+            Err(format!(
+                "Sanity check failed, expected transaction value version {} got {}",
+                0,
+                tv.version.get_value()
+            ))
+        }
+    }
+
     pub fn is_coin_transfer(&self) -> bool {
         self.version.get_value() == 0
+    }
+
+    pub fn is_id_transfer(&self) -> bool {
+        self.version.get_value() == 1
     }
 
     pub fn get_value(&self) -> Result<u128, String> {

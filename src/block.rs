@@ -95,6 +95,7 @@ impl StaticSized for BlockTime {
     }
 }
 
+#[derive(Clone)]
 pub struct Block {
     pub version: BlockVersion,
     pub merkle_root: BlockHash,

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 const BLOCK_VERSION_LEN: usize = 4;
 
+#[derive(Clone)]
 pub struct BlockVersion {
     value: [u8; BLOCK_VERSION_LEN],
 }

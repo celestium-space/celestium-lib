@@ -10,6 +10,7 @@ use std::{
 
 const BLOCK_HASH_SIZE: usize = 32;
 
+#[derive(Clone)]
 pub struct BlockHash {
     value: [u8; 32],
 }
