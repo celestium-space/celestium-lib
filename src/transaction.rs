@@ -41,6 +41,16 @@ impl Transaction {
         hash.copy_from_slice(&Sha256::digest(&data));
         Ok(hash)
     }
+
+    pub fn get_total_fee(&self) -> u128 {
+        let mut total_fee = 0;
+        for output in self.outputs.iter() {
+            if !output.value.is_coin_transfer() {
+                total_fee += output.value.get_fee().unwrap();
+            }
+        }
+        total_fee
+    }
 }
 
 impl PartialEq for Transaction {

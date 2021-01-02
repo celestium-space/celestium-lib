@@ -192,7 +192,6 @@ impl StaticSized for Block {
             + merkle_forest::HASH_SIZE
             + BlockHash::serialized_len()
             + BlockTime::serialized_len()
-            + PublicKey::serialized_len()
             + Magic::serialized_len()
     }
 }

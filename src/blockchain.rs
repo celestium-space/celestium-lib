@@ -96,6 +96,18 @@ impl Blockchain {
         Ok(unmined_serialized_block)
     }
 
+    pub fn get_head_hash(&self) -> Result<[u8; 32], String> {
+        match self.blocks.last() {
+            Some(b) => Ok(b.hash()),
+            None => Err(String::from("Cannot get head from empty blockchain")),
+        }
+    }
+
+    pub fn add_block(&mut self, block: Block) -> Result<usize, String> {
+        self.blocks.push(block);
+        Ok(self.blocks.len())
+    }
+
     pub fn add_serialized_block(
         &mut self,
         block: Vec<u8>,

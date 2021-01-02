@@ -7,17 +7,13 @@ use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
 pub struct TransactionOutput {
-    value: TransactionValue,
+    pub value: TransactionValue,
     pub pk: PublicKey,
 }
 
 impl TransactionOutput {
     pub fn new(value: TransactionValue, pk: PublicKey) -> Self {
         TransactionOutput { value, pk }
-    }
-
-    pub fn get_value_clone(&self) -> TransactionValue {
-        self.value.clone()
     }
 
     pub fn hash(&self) -> [u8; 32] {

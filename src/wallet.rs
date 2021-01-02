@@ -1,6 +1,9 @@
 use crate::{
+    block::Block,
+    block_hash::BlockHash,
     blockchain::Blockchain,
     merkle_forest::{MerkleForest, HASH_SIZE},
+    miner::Miner,
     serialize::{DynamicSized, Serialize},
     transaction::Transaction,
     transaction_input::TransactionInput,
@@ -21,7 +24,7 @@ pub struct Wallet {
     blockchain_merkle_forest: MerkleForest<Transaction>,
     unspent_outputs: Vec<(Transaction, TransactionVarUint)>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
-    off_chain_merkle_forest: MerkleForest<Transaction>,
+    off_chain_transactions: Vec<Transaction>,
 }
 
 impl Wallet {
@@ -39,7 +42,7 @@ impl Wallet {
             blockchain_merkle_forest: MerkleForest::new_empty(),
             unspent_outputs: Vec::new(),
             root_lookup: HashMap::new(),
-            off_chain_merkle_forest: MerkleForest::new_empty(),
+            off_chain_transactions: Vec::new(),
         }
     }
 
@@ -51,7 +54,7 @@ impl Wallet {
         leafs_bin: Vec<u8>,
         unspent_outputs_bin: Vec<u8>,
         root_lookup_bin: Vec<u8>,
-        off_chain_leafs_bin: Vec<u8>,
+        off_chain_transactions_bin: Vec<u8>,
     ) -> Result<Self, String> {
         let mut users = HashMap::new();
         let pk = *PublicKey::from_serialized(&pk_bin, &mut 0, &mut users)?;
@@ -76,12 +79,15 @@ impl Wallet {
             root_lookup.insert(k, v);
         }
 
-        let mut off_chain_merkle_forest = MerkleForest::new_empty();
-        off_chain_merkle_forest.add_serialized_transactions(
-            &off_chain_leafs_bin,
-            &mut 0,
-            &mut HashMap::new(),
-        )?;
+        let mut i = 0;
+        let mut off_chain_transactions = Vec::new();
+        while i < off_chain_transactions_bin.len() {
+            off_chain_transactions.push(*Transaction::from_serialized(
+                &off_chain_transactions_bin,
+                &mut i,
+                &mut users,
+            )?);
+        }
         Ok(Wallet {
             blockchain,
             pk: Some(pk),
@@ -90,7 +96,7 @@ impl Wallet {
             blockchain_merkle_forest: merkle_forest,
             unspent_outputs,
             root_lookup,
-            off_chain_merkle_forest,
+            off_chain_transactions,
         })
     }
 
@@ -123,14 +129,11 @@ impl Wallet {
 
         for (transaction, index) in cloned {
             let transaction_output = transaction.get_output(&index);
-            if transaction_output.pk == pk {
-                let output_value = transaction_output.get_value_clone();
-                if output_value.is_coin_transfer() {
-                    dust_gathered += value.get_value()?;
-                    outputs.push((transaction, index));
-                    if dust_gathered >= value.get_value()? + value.get_fee()? {
-                        break;
-                    }
+            if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
+                dust_gathered += transaction_output.value.get_value()?;
+                outputs.push((transaction, index));
+                if dust_gathered >= value.get_value()? + value.get_fee()? {
+                    break;
                 }
             }
         }
@@ -141,6 +144,10 @@ impl Wallet {
             inputs.push(input)
         }
         Ok((dust_gathered, inputs, outputs))
+    }
+
+    pub fn add_off_chain_transaction(&mut self, transaction: Transaction) {
+        self.off_chain_transactions.push(transaction);
     }
 
     pub fn send(&mut self, to_pk: PublicKey, value: TransactionValue) -> Result<Vec<u8>, String> {
@@ -165,8 +172,7 @@ impl Wallet {
                     let transaction_len = transaction.serialized_len();
                     let mut serialized_transaction = vec![0u8; transaction_len];
                     transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
-                    self.off_chain_merkle_forest
-                        .add_transactions(vec![transaction])?;
+                    self.off_chain_transactions.push(transaction);
                     self.unspent_outputs.retain(|x| !used_outputs.contains(&x));
                     Ok(serialized_transaction)
                 } else {
@@ -178,6 +184,48 @@ impl Wallet {
                 "Wallet must have both public key and secret key to send money",
             )),
         }
+    }
+
+    pub fn miner_from_off_chain_transactions(&self, data: Vec<u8>) -> Result<Miner, String> {
+        match self.pk {
+            Some(pk) => {
+                let total_fee = 0;
+                let mut transactions = Vec::new();
+                for transaction in self.off_chain_transactions.iter() {
+                    transaction.get_total_fee();
+                    transactions.push(transaction.clone());
+                }
+                transactions.push(Transaction::new(
+                    TransactionVersion::default(),
+                    Vec::new(),
+                    vec![
+                        TransactionOutput::new(
+                            TransactionValue::new_coin_transfer(total_fee, 0)?,
+                            pk,
+                        ),
+                        TransactionOutput::new(TransactionValue::new_id_transfer(data)?, pk),
+                    ],
+                ));
+                let mut merkle_forest = MerkleForest::new_empty();
+                merkle_forest.add_transactions(transactions.clone())?;
+                let merkle_root = *BlockHash::from_serialized(
+                    &merkle_forest.create_tree_from_leafs()?,
+                    &mut 0,
+                    &mut HashMap::new(),
+                )?;
+                let back_hash = *BlockHash::from_serialized(
+                    &self.blockchain.get_head_hash()?,
+                    &mut 0,
+                    &mut HashMap::new(),
+                )?;
+                Miner::new_from_hashes(merkle_root, back_hash, transactions)
+            }
+            None => Err(String::from("Need public key to mine")),
+        }
+    }
+
+    pub fn add_transactions(&mut self, transactions: Vec<Transaction>) -> Result<bool, String> {
+        self.blockchain_merkle_forest.add_transactions(transactions)
     }
 
     // pub fn clear_transaction_blocks(&mut self) {
@@ -376,6 +424,10 @@ impl Wallet {
     //     }
     //     Ok(buffer)
     // }
+
+    pub fn add_block(&mut self, block: Block) -> Result<usize, String> {
+        self.blockchain.add_block(block)
+    }
 
     pub fn add_serialized_block(&mut self, serialized_block: Vec<u8>) -> Result<Vec<u8>, String> {
         self.blockchain

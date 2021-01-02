@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 pub const HASH_SIZE: usize = 32;
 
+#[derive(Clone)]
 pub struct Node {
     left: [u8; HASH_SIZE],
     right: [u8; HASH_SIZE],
@@ -31,6 +32,7 @@ impl Node {
     }
 }
 
+#[derive(Clone)]
 pub struct MerkleForest<T> {
     leafs: HashMap<[u8; HASH_SIZE], T>,
     branches: HashMap<[u8; HASH_SIZE], Node>,
@@ -67,7 +69,7 @@ impl MerkleForest<Transaction> {
     pub fn add_serialized_nodes(&mut self, data: &[u8]) -> Result<bool, String> {
         if data.len() % HASH_SIZE * 2 != 0 {
             return Err(format!(
-                "Data lenght {} is not devidable with node size of {}",
+                "Data length {} is not devisable with node size of {}",
                 data.len(),
                 HASH_SIZE * 2
             ));
@@ -149,7 +151,7 @@ impl MerkleForest<Transaction> {
     pub fn get_transactions(
         &self,
         hashes: Vec<[u8; 32]>,
-    ) -> Result<Vec<&Transaction>, (Vec<&Transaction>, Vec<[u8; 32]>)> {
+    ) -> 0Result<Vec<&Transaction>, (Vec<&Transaction>, Vec<[u8; 32]>)> {
         let mut missing = Vec::new();
         let mut found = Vec::new();
         for hash in hashes {
