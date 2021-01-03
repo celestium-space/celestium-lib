@@ -151,7 +151,7 @@ impl MerkleForest<Transaction> {
     pub fn get_transactions(
         &self,
         hashes: Vec<[u8; 32]>,
-    ) -> 0Result<Vec<&Transaction>, (Vec<&Transaction>, Vec<[u8; 32]>)> {
+    ) -> Result<Vec<&Transaction>, (Vec<&Transaction>, Vec<[u8; 32]>)> {
         let mut missing = Vec::new();
         let mut found = Vec::new();
         for hash in hashes {
