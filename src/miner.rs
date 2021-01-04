@@ -67,8 +67,7 @@ impl Miner {
         transactions: Vec<Transaction>,
     ) -> Self {
         let block_len = serialized_block.len();
-        let magic_byte_count = 1usize;
-        let mut my_serialized_block = vec![0u8; block_len + magic_byte_count];
+        let mut my_serialized_block = vec![0u8; block_len];
         my_serialized_block[0..block_len].copy_from_slice(&serialized_block);
         let magic = Magic::new(range.start as u64);
         Miner {

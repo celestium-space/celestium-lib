@@ -127,17 +127,6 @@ impl Serialize for Blockchain {
         i: &mut usize,
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Blockchain>, String> {
-        let block_zero_owner_pk = *PublicKey::from_serialized(&data[2..35], &mut 0, users)?;
-        let mut block_zero_owner = User::new(block_zero_owner_pk);
-        block_zero_owner
-            .give(TransactionValue::new_coin_transfer(BLOCK_ZERO_FEE, 0)?)
-            .unwrap();
-        if users
-            .insert(block_zero_owner_pk, block_zero_owner)
-            .is_some()
-        {
-            return Err("Unexpected: Block zero user already exists in system".to_string());
-        }
         let blocks = Blockchain::parse_blocks(data, i, users)?;
         Ok(Box::new(Blockchain::new(blocks)))
     }
