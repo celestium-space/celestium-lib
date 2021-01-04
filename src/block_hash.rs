@@ -21,8 +21,7 @@ impl BlockHash {
     }
 
     pub fn contains_enough_work(&self) -> bool {
-        if self.value[0] == 0 && self.value[1] == 0 {
-            // && self.value[2] == 0 && self.value[3] == 0 {
+        if self.value[0] == 0 { //&& self.value[1] == 0 && self.value[2] == 0 && self.value[3] == 0 {
             return true;
         }
         false

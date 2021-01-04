@@ -67,7 +67,7 @@ impl Blockchain {
         ))
     }
 
-    pub fn create_unmined_block(&self, merkle_root: BlockHash) -> Result<Vec<u8>, String> {
+    pub fn create_unmined_block(&self, merkle_root: BlockHash, secs_since_epoc: u64) -> Result<Vec<u8>, String> {
         let back_hash;
         if !self.blocks.is_empty() {
             let mut last_block_serialized = vec![0; Block::serialized_len()];
@@ -88,7 +88,7 @@ impl Blockchain {
             BlockVersion::default(),
             merkle_root,
             back_hash,
-            BlockTime::now(),
+            BlockTime::new(secs_since_epoc),
             Magic::new(0),
         );
         let mut unmined_serialized_block = vec![0u8; Block::serialized_len()];

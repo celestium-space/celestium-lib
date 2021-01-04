@@ -31,9 +31,10 @@ impl Miner {
         merkle_root: BlockHash,
         back_hash: BlockHash,
         transactions: Vec<Transaction>,
+        secs_since_epoc: u64,
     ) -> Result<Self, String> {
         let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0, &mut HashMap::new())?;
-        let time = BlockTime::now();
+        let time = BlockTime::new(secs_since_epoc);
         let magic = Magic::new(0);
         let block = Block::new(version, merkle_root, back_hash, time, magic);
         let mut block_serialized = vec![0u8; Block::serialized_len()];
