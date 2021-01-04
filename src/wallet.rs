@@ -1,3 +1,7 @@
+use crate::magic::Magic;
+use crate::block::BlockTime;
+use secp256k1::Secp256k1;
+use crate::block_version::BlockVersion;
 use crate::{
     block::Block,
     block_hash::BlockHash,
@@ -15,6 +19,8 @@ use crate::{
 };
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
+use rand::rngs::OsRng;
+use std::task::Poll;
 use std::{collections::HashMap, fs::File, io::Read, path::PathBuf};
 
 pub struct BinaryWallet {
@@ -173,6 +179,23 @@ impl Wallet {
         }
     }
 
+    pub fn get_balance(&self) -> u128 {
+        match self.pk {
+            Some(pk) => {
+                let mut dust_gathered = 0;
+                let mut cloned = self.unspent_outputs.clone();
+                for (transaction, index) in cloned {
+                    let transaction_output = transaction.get_output(&index);
+                    if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
+                        dust_gathered += transaction_output.value.get_value().unwrap();
+                    }
+                }
+                dust_gathered
+            },
+            None => 0,
+        }
+    }
+
     fn collect_for_coin_transfer(
         &self,
         value: &TransactionValue,
@@ -188,6 +211,7 @@ impl Wallet {
         let mut dust_gathered = 0;
         let mut outputs = Vec::new();
         let mut cloned = self.unspent_outputs.clone();
+        println!("Cloned: {}", cloned.len());
         cloned.sort_by(|(a, _), (b, _)| {
             let block_a = self
                 .blockchain
@@ -229,7 +253,10 @@ impl Wallet {
                 if value.is_coin_transfer() {
                     let (dust, mut inputs, used_outputs) =
                         self.collect_for_coin_transfer(&value, pk)?;
+                    println!("Dust: {}", dust);
+                    println!("Unused outputs: {}", used_outputs.len());
                     let change = dust - (value.get_value()? + value.get_fee()?);
+                    println!("Change {}", change);
                     for input in inputs.iter_mut() {
                         input.sign(sk);
                     }
@@ -297,7 +324,20 @@ impl Wallet {
         }
     }
 
-    pub fn add_transactions(&mut self, transactions: Vec<Transaction>) -> Result<bool, String> {
+    pub fn add_transactions(&mut self, transactions: Vec<Transaction>, block_hash: [u8; 32]) -> Result<bool, String> {
+        match self.pk {
+            Some(pk) => {
+                for transaction in transactions.iter(){
+                    for (i, transaction_output) in transaction.outputs.iter().enumerate() {
+                        if transaction_output.pk == pk {
+                            self.unspent_outputs.push((transaction.clone(), TransactionVarUint::from_usize(i)));
+                            self.root_lookup.insert(transaction.hash()?, block_hash);
+                        }
+                    }
+                }
+            },
+            None => {},
+        }
         self.blockchain_merkle_forest.add_transactions(transactions)
     }
 
@@ -358,6 +398,11 @@ impl Wallet {
             transactions.push(*Transaction::from_serialized(&data, &mut i, users)?);
         }
         Ok(transactions)
+        //         i += PAR_WORK * N_PAR_WORKERS;
+        //         if i > end_i {
+        //             break;
+        //         }
+        //     }
     }
 
     // pub fn start_mining_thread<'a>(
@@ -548,5 +593,77 @@ impl Wallet {
             &mut i,
             &mut HashMap::new(),
         )?)
+    }
+
+    pub fn generate_test_blockchain() -> Result<BinaryWallet, String> {
+        let (sk1, pk1) = Wallet::generate_ec_keys();
+        let (sk2, pk2) = Wallet::generate_ec_keys();
+
+        let my_value = TransactionValue::new_coin_transfer(u128::MAX, 0)?;
+        println!(
+            "Creating initial blockchain (with a little block-zero bonus of {} dust for you 😉)",
+            my_value
+        );
+        let mut users = HashMap::new();
+        let t0 = Transaction::new(
+            TransactionVersion::default(),
+            Vec::new(),
+            vec![
+                TransactionOutput::new(my_value, pk1),
+                TransactionOutput::new(
+                    TransactionValue::new_id_transfer("Celestium".as_bytes().to_vec())?,
+                    pk1,
+                ),
+            ],
+        );
+        let b0 = Block::new(
+            BlockVersion::default(),
+            *BlockHash::from_serialized(&t0.hash()?, &mut 0, &mut HashMap::new())?,
+            BlockHash::default(),
+            BlockTime::now(),
+            Magic::new(0),
+        );
+        let mut b0_serialized = vec![0u8; Block::serialized_len()];
+        b0.serialize_into(&mut b0_serialized, &mut 0)?;
+        let mut miner = Miner::new(b0_serialized, [t0].to_vec());
+        println!("Mining first block...");
+        let mut wallet;
+        match Wallet::mine_until_complete(&mut miner) {
+            Some(b) => {
+                let block_hash = b.hash();
+                wallet = Wallet::new_empty(Blockchain::new([b].to_vec()), pk1, sk1, users);
+                wallet.add_transactions(miner.transactions, block_hash)?;
+            },
+            None => return Err(String::from("Could not mine first block")),
+        };
+        println!("First block mined!");
+        &wallet.send(pk2, TransactionValue::new_coin_transfer(500, 25)?)?;
+        let mut miner = wallet.miner_from_off_chain_transactions(b"Celestium2".to_vec())?;
+        println!("Mining second block...");
+        match Wallet::mine_until_complete(&mut miner) {
+            Some(b) => {
+                wallet.add_transactions(miner.transactions, b.hash())?;
+                wallet.add_block(b)?;
+            }
+            None => return Err(String::from("Could not mine second block")),
+        };
+        println!("Second block mined!");
+            
+        wallet.to_binary()
+    }
+
+    pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {
+        loop {
+            match miner.do_work() {
+                Poll::Ready(result) => return result,
+                Poll::Pending => {}
+            }
+        }
+    }
+
+    fn generate_ec_keys() -> (SecretKey, PublicKey) {
+        let secp = Secp256k1::new();
+        let mut rng = OsRng::new().expect("OsRng");
+        secp.generate_keypair(&mut rng)
     }
 }

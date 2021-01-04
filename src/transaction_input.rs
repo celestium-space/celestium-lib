@@ -33,9 +33,19 @@ impl TransactionInput {
         hash
     }
 
+    pub fn sign_hash(&self) -> [u8; HASH_SIZE] {
+        let mut hash = [0u8; 32];
+        let mut self_serialized = vec![0u8; HASH_SIZE + self.index.serialized_len()];
+        self_serialized[0..HASH_SIZE].copy_from_slice(&self.tx);
+        let mut i = HASH_SIZE;
+        self.index.serialize_into(&mut self_serialized, &mut i).unwrap();
+        hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
+        hash
+    }
+
     pub fn sign(&mut self, sk: SecretKey) {
         let secp = Secp256k1::new();
-        let message = Message::from_slice(Sha256::digest(&self.hash()).as_slice()).unwrap();
+        let message = Message::from_slice(Sha256::digest(&self.sign_hash()).as_slice()).unwrap();
         self.signature = Some(secp.sign(&message, &sk));
     }
 }
@@ -56,9 +66,28 @@ impl Serialize for TransactionInput {
         todo!()
     }
 
-    fn serialize_into(&self, _data: &mut [u8], _i: &mut usize) -> Result<usize, String> {
-        println!("TransactionInput serialize_into");
-        todo!()
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        match self.signature {
+            Some(signature) => {
+                let bytes_left = data.len() - *i;
+                if bytes_left < self.serialized_len() {
+                    return Err(format!(
+                        "Too few bytes left for serializing transaction input, expected at least {} got {}",
+                        self.serialized_len(),
+                        bytes_left
+                    ));
+                }
+                let pre_i = *i;
+                data[*i..*i + HASH_SIZE].copy_from_slice(&self.tx);
+                *i += HASH_SIZE;
+                self.index.serialize_into(data, i)?;
+                let compact_signature = signature.serialize_compact();
+                data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
+                *i += compact_signature.len();
+                Ok(*i - pre_i)
+            },
+            None => Err(String::from("Cannot serialize transaction input with missing signature")),
+        }
     }
 }
 
