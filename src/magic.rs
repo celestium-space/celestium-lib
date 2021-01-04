@@ -25,7 +25,11 @@ impl Magic {
     }
 
     fn increase_rec(&mut self, i: usize) {
-        self.value[i] += 1;
+        if self.value[i] == u8::MAX {
+            self.value[i] = 0;
+        } else {
+            self.value[i] += 1;
+        }
         if self.value[i] == 0 {
             self.increase_rec(i - 1)
         }
