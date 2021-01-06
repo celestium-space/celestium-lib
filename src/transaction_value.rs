@@ -1,4 +1,5 @@
 use crate::{
+    merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
     transaction_varuint::TransactionVarUint,
     user::User,
@@ -50,9 +51,9 @@ impl TransactionValue {
         }
     }
 
-    pub fn new_id_transfer(data: Vec<u8>) -> Result<Self, String> {
+    pub fn new_id_transfer(hash: [u8; HASH_SIZE]) -> Result<Self, String> {
         let mut value = [0; TRANSACTION_ID_LEN];
-        value.copy_from_slice(Sha256::digest(&data).as_slice());
+        value.copy_from_slice(&hash);
         let tv = TransactionValue {
             version: TransactionVarUint::from_usize(1),
             value,
@@ -149,6 +150,7 @@ impl Serialize for TransactionValue {
         }
         let mut value = [0; TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN];
         value.copy_from_slice(&data[*i..*i + TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN]);
+        *i += value.len();
         Ok(Box::new(TransactionValue { version, value }))
     }
 

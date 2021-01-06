@@ -1,7 +1,6 @@
-use crate::magic::Magic;
 use crate::block::BlockTime;
-use secp256k1::Secp256k1;
 use crate::block_version::BlockVersion;
+use crate::magic::Magic;
 use crate::{
     block::Block,
     block_hash::BlockHash,
@@ -17,6 +16,7 @@ use crate::{
     transaction_version::TransactionVersion,
     user::User,
 };
+use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
 use std::task::Poll;
@@ -41,7 +41,7 @@ pub struct Wallet {
     blockchain_merkle_forest: MerkleForest<Transaction>,
     unspent_outputs: Vec<(Transaction, TransactionVarUint)>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
-    off_chain_transactions: Vec<Transaction>,
+    off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
 }
 
 impl Wallet {
@@ -59,7 +59,7 @@ impl Wallet {
             blockchain_merkle_forest: MerkleForest::new_empty(),
             unspent_outputs: Vec::new(),
             root_lookup: HashMap::new(),
-            off_chain_transactions: Vec::new(),
+            off_chain_transactions: HashMap::new(),
         }
     }
 
@@ -101,13 +101,14 @@ impl Wallet {
         }
 
         let mut i = 0;
-        let mut off_chain_transactions = Vec::new();
+        let mut off_chain_transactions = HashMap::new();
         while i < binary_wallet.off_chain_transactions_bin.len() {
-            off_chain_transactions.push(*Transaction::from_serialized(
+            let transaciton = *Transaction::from_serialized(
                 &binary_wallet.off_chain_transactions_bin,
                 &mut i,
                 &mut users,
-            )?);
+            )?;
+            off_chain_transactions.insert(transaciton.hash()?, transaciton);
         }
         Ok(Wallet {
             blockchain,
@@ -125,7 +126,7 @@ impl Wallet {
         })
     }
 
-    pub fn to_binary(self) -> Result<BinaryWallet, String> {
+    pub fn to_binary(&self) -> Result<BinaryWallet, String> {
         match (self.pk, self.sk) {
             (Some(pk), Some(sk)) => {
                 let mut blockchain_bin = vec![0u8; self.blockchain.serialized_len()];
@@ -138,7 +139,7 @@ impl Wallet {
                 let mf_branches_bin = self.blockchain_merkle_forest.serialize_all_nodes()?;
                 let mf_leafs_bin = self.blockchain_merkle_forest.serialize_all_transactions()?;
                 let mut unspent_outputs_bin = Vec::new();
-                for unspent_output in self.unspent_outputs {
+                for unspent_output in self.unspent_outputs.iter() {
                     let (transaction, index) = unspent_output;
                     let mut unspent_output_bin =
                         vec![0u8; transaction.serialized_len() + index.serialized_len()];
@@ -149,14 +150,14 @@ impl Wallet {
                 }
                 let mut root_lookup_bin = vec![0u8; self.root_lookup.len() * HASH_SIZE * 2];
                 let mut i = 0;
-                for root_lookup in self.root_lookup {
-                    root_lookup_bin[i..i + HASH_SIZE].copy_from_slice(&root_lookup.0);
+                for root_lookup in self.root_lookup.iter() {
+                    root_lookup_bin[i..i + HASH_SIZE].copy_from_slice(root_lookup.0);
                     i += HASH_SIZE;
-                    root_lookup_bin[i..i + HASH_SIZE].copy_from_slice(&root_lookup.1);
+                    root_lookup_bin[i..i + HASH_SIZE].copy_from_slice(root_lookup.1);
                     i += HASH_SIZE;
                 }
                 let mut off_chain_transactions_bin = Vec::new();
-                for transaction in self.off_chain_transactions {
+                for transaction in self.off_chain_transactions.values() {
                     let mut transaction_bin = vec![0u8; transaction.serialized_len()];
                     transaction.serialize_into(&mut transaction_bin, &mut 0)?;
                     off_chain_transactions_bin.append(&mut transaction_bin);
@@ -178,20 +179,28 @@ impl Wallet {
         }
     }
 
-    pub fn get_balance(&self) -> u128 {
+    pub fn get_mining_value(&self) -> Result<u128, String> {
+        let mut value = 0;
+        for transaction in self.off_chain_transactions.values() {
+            value += transaction.get_total_fee();
+        }
+        Ok(value)
+    }
+
+    pub fn get_balance(&self) -> Result<u128, String> {
         match self.pk {
             Some(pk) => {
                 let mut dust_gathered = 0;
-                let mut cloned = self.unspent_outputs.clone();
+                let cloned = self.unspent_outputs.clone();
                 for (transaction, index) in cloned {
                     let transaction_output = transaction.get_output(&index);
                     if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
                         dust_gathered += transaction_output.value.get_value().unwrap();
                     }
                 }
-                dust_gathered
-            },
-            None => 0,
+                Ok(dust_gathered)
+            }
+            None => Err(String::from("Cannot get balance without public key")),
         }
     }
 
@@ -210,7 +219,6 @@ impl Wallet {
         let mut dust_gathered = 0;
         let mut outputs = Vec::new();
         let mut cloned = self.unspent_outputs.clone();
-        println!("Cloned: {}", cloned.len());
         cloned.sort_by(|(a, _), (b, _)| {
             let block_a = self
                 .blockchain
@@ -235,63 +243,68 @@ impl Wallet {
         }
         let mut inputs = Vec::new();
         for (transaction, index) in outputs.iter() {
-            let input =
-                TransactionInput::from_output(transaction.get_output(&index), index.clone());
+            let input = TransactionInput::from_transaction(transaction.clone(), index.clone());
             inputs.push(input)
         }
         Ok((dust_gathered, inputs, outputs))
     }
 
     pub fn add_off_chain_transaction(&mut self, transaction: Transaction) {
-        self.off_chain_transactions.push(transaction);
+        self.off_chain_transactions
+            .insert(transaction.hash().unwrap(), transaction);
+    }
+
+    pub fn send_with_sk(
+        &mut self,
+        to_pk: PublicKey,
+        value: TransactionValue,
+        from_pk: PublicKey,
+        from_sk: SecretKey,
+    ) -> Result<Vec<u8>, String> {
+        if value.is_coin_transfer() {
+            let (dust, inputs, used_outputs) = self.collect_for_coin_transfer(&value, from_pk)?;
+            let change = dust - (value.get_value()? + value.get_fee()?);
+            let mut outputs = vec![TransactionOutput::new(value, to_pk)];
+            if change > 0 {
+                outputs.push(TransactionOutput::new(
+                    TransactionValue::new_coin_transfer(change, 0)?,
+                    from_pk,
+                ));
+            }
+            let mut transaction = Transaction::new(TransactionVersion::default(), inputs, outputs);
+            for i in 0..transaction.inputs.len() {
+                transaction.sign(from_sk, i)?;
+            }
+            let transaction_len = transaction.serialized_len();
+            let mut serialized_transaction = vec![0u8; transaction_len];
+            transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
+            self.add_off_chain_transaction(transaction);
+            Ok(serialized_transaction)
+        } else {
+            Err(String::from("Send ID not implented"))
+        }
     }
 
     pub fn send(&mut self, to_pk: PublicKey, value: TransactionValue) -> Result<Vec<u8>, String> {
         match (self.pk, self.sk) {
-            (Some(pk), Some(sk)) => {
-                if value.is_coin_transfer() {
-                    let (dust, mut inputs, used_outputs) =
-                        self.collect_for_coin_transfer(&value, pk)?;
-                    println!("Dust: {}", dust);
-                    println!("Unused outputs: {}", used_outputs.len());
-                    let change = dust - (value.get_value()? + value.get_fee()?);
-                    println!("Change {}", change);
-                    for input in inputs.iter_mut() {
-                        input.sign(sk);
-                    }
-                    let mut outputs = vec![TransactionOutput::new(value, to_pk)];
-                    if change > 0 {
-                        outputs.push(TransactionOutput::new(
-                            TransactionValue::new_coin_transfer(change, 0)?,
-                            pk,
-                        ));
-                    }
-                    let transaction =
-                        Transaction::new(TransactionVersion::default(), inputs, outputs);
-                    let transaction_len = transaction.serialized_len();
-                    let mut serialized_transaction = vec![0u8; transaction_len];
-                    transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
-                    self.off_chain_transactions.push(transaction);
-                    self.unspent_outputs.retain(|x| !used_outputs.contains(&x));
-                    Ok(serialized_transaction)
-                } else {
-                    println!("else");
-                    todo!()
-                }
-            }
+            (Some(pk), Some(sk)) => self.send_with_sk(to_pk, value, pk, sk),
             _ => Err(String::from(
                 "Wallet must have both public key and secret key to send money",
             )),
         }
     }
 
-    pub fn miner_from_off_chain_transactions(&self, data: Vec<u8>, secs_since_epoc: u64) -> Result<Miner, String> {
+    pub fn miner_from_off_chain_transactions(
+        &self,
+        hash: [u8; HASH_SIZE],
+        secs_since_epoc: u32,
+    ) -> Result<Miner, String> {
         match self.pk {
             Some(pk) => {
-                let total_fee = 0;
+                let mut total_fee = 0;
                 let mut transactions = Vec::new();
-                for transaction in self.off_chain_transactions.iter() {
-                    transaction.get_total_fee();
+                for transaction in self.off_chain_transactions.values() {
+                    total_fee += transaction.get_total_fee();
                     transactions.push(transaction.clone());
                 }
                 transactions.push(Transaction::new(
@@ -302,7 +315,7 @@ impl Wallet {
                             TransactionValue::new_coin_transfer(total_fee, 0)?,
                             pk,
                         ),
-                        TransactionOutput::new(TransactionValue::new_id_transfer(data)?, pk),
+                        TransactionOutput::new(TransactionValue::new_id_transfer(hash)?, pk),
                     ],
                 ));
                 let mut merkle_forest = MerkleForest::new_empty();
@@ -323,20 +336,32 @@ impl Wallet {
         }
     }
 
-    pub fn add_transactions(&mut self, transactions: Vec<Transaction>, block_hash: [u8; 32]) -> Result<bool, String> {
-        match self.pk {
-            Some(pk) => {
-                for transaction in transactions.iter(){
-                    for (i, transaction_output) in transaction.outputs.iter().enumerate() {
-                        if transaction_output.pk == pk {
-                            self.unspent_outputs.push((transaction.clone(), TransactionVarUint::from_usize(i)));
-                            self.root_lookup.insert(transaction.hash()?, block_hash);
-                        }
-                    }
-                }
-            },
-            None => {},
+    pub fn add_on_chain_transactions(
+        &mut self,
+        transactions: Vec<Transaction>,
+        block_hash: [u8; HASH_SIZE],
+    ) -> Result<bool, String> {
+        let mut spent_outputs: Vec<([u8; HASH_SIZE], usize)> = Vec::new();
+        for transaction in transactions.iter() {
+            self.off_chain_transactions.remove(&transaction.hash()?);
+            for (i, _) in transaction.outputs.iter().enumerate() {
+                //if self.pk.is_some() && self.pk.unwrap() == transaction_output.pk {
+                self.root_lookup.insert(transaction.hash()?, block_hash);
+                self.unspent_outputs
+                    .push((transaction.clone(), TransactionVarUint::from_usize(i)));
+                //}
+            }
+            for input in transaction.inputs.iter() {
+                spent_outputs.push((input.tx, input.index.get_value()));
+            }
         }
+
+        self.unspent_outputs
+            .retain(|(unspent_output_transaction, index)| {
+                !spent_outputs.iter().any(|(tx, i)| {
+                    unspent_output_transaction.hash().unwrap() == *tx && index.get_value() == *i
+                })
+            });
         self.blockchain_merkle_forest.add_transactions(transactions)
     }
 
@@ -580,6 +605,7 @@ impl Wallet {
             &mut HashMap::new(),
         )?)
     }
+
     pub fn load_secret_key_from_file(
         secret_key_file_location: &PathBuf,
     ) -> Result<SecretKey, String> {
@@ -594,23 +620,27 @@ impl Wallet {
         )?)
     }
 
-    pub fn generate_test_blockchain(secs_since_epoc: u64) -> Result<Wallet, String> {
-        let (sk1, pk1) = Wallet::generate_ec_keys();
-        let (sk2, pk2) = Wallet::generate_ec_keys();
+    pub fn generate_test_blockchain(
+        serialized_pk: Vec<u8>,
+        serialized_sk: Vec<u8>,
+        secs_since_epoc: u32,
+    ) -> Result<Wallet, String> {
+        let pk1 = *PublicKey::from_serialized(&serialized_pk, &mut 0, &mut HashMap::new())?;
+        let sk1 = *SecretKey::from_serialized(&serialized_sk, &mut 0, &mut HashMap::new())?;
 
-        let my_value = TransactionValue::new_coin_transfer(u128::MAX, 0)?;
+        let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
         let users = HashMap::new();
+        let mut data_hash = [0u8; HASH_SIZE];
+        data_hash.copy_from_slice(&Sha256::digest(b"Hello, World!"));
         let t0 = Transaction::new(
             TransactionVersion::default(),
             Vec::new(),
             vec![
                 TransactionOutput::new(my_value, pk1),
-                TransactionOutput::new(
-                    TransactionValue::new_id_transfer(b"Hello, World!".to_vec())?,
-                    pk1,
-                ),
+                TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
             ],
         );
+
         let b0 = Block::new(
             BlockVersion::default(),
             *BlockHash::from_serialized(&t0.hash()?, &mut 0, &mut HashMap::new())?,
@@ -618,6 +648,7 @@ impl Wallet {
             BlockTime::new(secs_since_epoc),
             Magic::new(0),
         );
+
         let mut b0_serialized = vec![0u8; Block::serialized_len()];
         b0.serialize_into(&mut b0_serialized, &mut 0)?;
         let mut miner = Miner::new(b0_serialized, [t0].to_vec());
@@ -626,20 +657,10 @@ impl Wallet {
             Some(b) => {
                 let block_hash = b.hash();
                 wallet = Wallet::new_empty(Blockchain::new([b].to_vec()), pk1, sk1, users);
-                wallet.add_transactions(miner.transactions, block_hash)?;
-            },
+                wallet.add_on_chain_transactions(miner.transactions, block_hash)?;
+            }
             None => return Err(String::from("Could not mine first block")),
         };
-        &wallet.send(pk2, TransactionValue::new_coin_transfer(u128::MAX / 2 as u128, u128::MAX / 2 as u128)?)?;
-        let mut miner = wallet.miner_from_off_chain_transactions(b"Celestium2".to_vec(), secs_since_epoc)?;
-        match Wallet::mine_until_complete(&mut miner) {
-            Some(b) => {
-                wallet.add_transactions(miner.transactions, b.hash())?;
-                wallet.add_block(b)?;
-            }
-            None => return Err(String::from("Could not mine second block")),
-        };
-
         Ok(wallet)
     }
 

@@ -4,14 +4,11 @@ use crate::{
     block_version::BlockVersion,
     magic::Magic,
     serialize::{DynamicSized, Serialize, StaticSized},
-    transaction_value::TransactionValue,
     user::User,
 };
 use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-
-const BLOCK_ZERO_FEE: u128 = u128::MAX;
 
 pub struct Blockchain {
     blocks: Vec<Block>,
@@ -67,7 +64,19 @@ impl Blockchain {
         ))
     }
 
-    pub fn create_unmined_block(&self, merkle_root: BlockHash, secs_since_epoc: u64) -> Result<Vec<u8>, String> {
+    pub fn len(&self) -> usize {
+        self.blocks.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    pub fn create_unmined_block(
+        &self,
+        merkle_root: BlockHash,
+        secs_since_epoc: u32,
+    ) -> Result<Vec<u8>, String> {
         let back_hash;
         if !self.blocks.is_empty() {
             let mut last_block_serialized = vec![0; Block::serialized_len()];

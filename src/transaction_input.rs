@@ -1,9 +1,10 @@
 use crate::{
     serialize::{DynamicSized, Serialize},
+    transaction::Transaction,
     transaction_output::TransactionOutput,
     transaction_varuint::TransactionVarUint,
 };
-use secp256k1::{Message, Secp256k1, SecretKey, Signature};
+use secp256k1::Signature;
 use sha2::{Digest, Sha256};
 
 const SECP256K1_SIG_LEN: usize = 64;
@@ -11,15 +12,15 @@ const HASH_SIZE: usize = 32;
 
 #[derive(Clone)]
 pub struct TransactionInput {
-    tx: [u8; HASH_SIZE],
-    index: TransactionVarUint,
-    signature: Option<Signature>,
+    pub tx: [u8; HASH_SIZE],
+    pub index: TransactionVarUint,
+    pub signature: Option<Signature>,
 }
 
 impl TransactionInput {
-    pub fn from_output(output: TransactionOutput, index: TransactionVarUint) -> Self {
+    pub fn from_transaction(transaction: Transaction, index: TransactionVarUint) -> Self {
         TransactionInput {
-            tx: output.hash(),
+            tx: transaction.hash().unwrap(),
             index,
             signature: None,
         }
@@ -38,15 +39,11 @@ impl TransactionInput {
         let mut self_serialized = vec![0u8; HASH_SIZE + self.index.serialized_len()];
         self_serialized[0..HASH_SIZE].copy_from_slice(&self.tx);
         let mut i = HASH_SIZE;
-        self.index.serialize_into(&mut self_serialized, &mut i).unwrap();
+        self.index
+            .serialize_into(&mut self_serialized, &mut i)
+            .unwrap();
         hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
         hash
-    }
-
-    pub fn sign(&mut self, sk: SecretKey) {
-        let secp = Secp256k1::new();
-        let message = Message::from_slice(Sha256::digest(&self.sign_hash()).as_slice()).unwrap();
-        self.signature = Some(secp.sign(&message, &sk));
     }
 }
 
@@ -58,12 +55,25 @@ impl PartialEq for TransactionInput {
 
 impl Serialize for TransactionInput {
     fn from_serialized(
-        _data: &[u8],
-        _i: &mut usize,
-        _users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
+        data: &[u8],
+        i: &mut usize,
+        users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
-        println!("TransactionInput from_serialized");
-        todo!()
+        let mut tx = [0u8; HASH_SIZE];
+        tx.copy_from_slice(&data[*i..*i + HASH_SIZE]);
+        *i += HASH_SIZE;
+        let index = *TransactionVarUint::from_serialized(data, i, users)?;
+        match Signature::from_compact(&data[*i..*i + SECP256K1_SIG_LEN]) {
+            Ok(signature) => {
+                *i += signature.serialize_compact().len();
+                Ok(Box::new(TransactionInput {
+                    tx,
+                    index,
+                    signature: Some(signature),
+                }))
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
@@ -85,8 +95,10 @@ impl Serialize for TransactionInput {
                 data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
                 *i += compact_signature.len();
                 Ok(*i - pre_i)
-            },
-            None => Err(String::from("Cannot serialize transaction input with missing signature")),
+            }
+            None => Err(String::from(
+                "Cannot serialize transaction input with missing signature",
+            )),
         }
     }
 }

@@ -29,8 +29,9 @@ impl Serialize for PublicKey {
                 Ok(Box::new(public_key))
             }
             Err(e) => Err(format!(
-                "Could not deserialize public key {:x?}: {}",
+                "Could not deserialize public key {:x?} at {} - {}",
                 &data[*i..*i + PUBLIC_KEY_COMPRESSED_SIZE],
+                *i,
                 e.to_string()
             )),
         }

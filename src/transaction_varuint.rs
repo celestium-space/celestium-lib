@@ -48,6 +48,7 @@ impl Serialize for TransactionVarUint {
         while data[*i] > 0x7 {
             *i += 1;
         }
+        *i += 1;
         let mut value = vec![0u8; *i - pre_i];
         value.copy_from_slice(&data[pre_i..*i]);
         Ok(Box::new(TransactionVarUint { value }))

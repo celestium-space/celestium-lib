@@ -18,7 +18,7 @@ pub struct BlockTime {
 }
 
 impl BlockTime {
-    pub fn new(secs_since_epoc: u64) -> Self {
+    pub fn new(secs_since_epoc: u32) -> Self {
         let mut value = [0; BLOCK_TIME_SIZE];
         value[0] = (secs_since_epoc >> 24) as u8;
         value[1] = (secs_since_epoc >> 16) as u8;

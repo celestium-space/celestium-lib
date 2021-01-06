@@ -27,12 +27,13 @@ impl TransactionOutput {
 
 impl Serialize for TransactionOutput {
     fn from_serialized(
-        _data: &[u8],
-        _i: &mut usize,
-        _users: &mut std::collections::HashMap<PublicKey, crate::user::User>,
+        data: &[u8],
+        i: &mut usize,
+        users: &mut std::collections::HashMap<PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
-        println!("TransactionOutput from_serialized");
-        todo!()
+        let value = *TransactionValue::from_serialized(data, i, users)?;
+        let pk = *PublicKey::from_serialized(data, i, users)?;
+        Ok(Box::new(TransactionOutput { value, pk }))
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {

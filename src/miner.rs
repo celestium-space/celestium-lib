@@ -14,6 +14,7 @@ use std::{
     task::{Context, Poll},
 };
 
+#[derive(Clone)]
 pub struct Miner {
     my_serialized_block: Vec<u8>,
     i: u64,
@@ -31,7 +32,7 @@ impl Miner {
         merkle_root: BlockHash,
         back_hash: BlockHash,
         transactions: Vec<Transaction>,
-        secs_since_epoc: u64,
+        secs_since_epoc: u32,
     ) -> Result<Self, String> {
         let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0, &mut HashMap::new())?;
         let time = BlockTime::new(secs_since_epoc);
@@ -81,8 +82,6 @@ impl Miner {
     }
 
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
-        self.current_magic.increase();
-        self.i += 1;
         let magic_start = self.my_serialized_block.len() - Magic::serialized_len() - 1;
         let mut serialized_magic = vec![0u8; Magic::serialized_len()];
         self.current_magic
@@ -102,6 +101,8 @@ impl Miner {
                     .unwrap();
             Poll::Ready(Some(block))
         } else if self.i < self.end {
+            self.current_magic.increase();
+            self.i += 1;
             Poll::Pending
         } else {
             Poll::Ready(None)

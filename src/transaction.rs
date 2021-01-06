@@ -1,4 +1,5 @@
 use crate::{
+    merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
     transaction_input::TransactionInput,
     transaction_output::TransactionOutput,
@@ -6,14 +7,14 @@ use crate::{
     transaction_version::TransactionVersion,
     user::User,
 };
-use secp256k1::PublicKey;
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct Transaction {
     version: TransactionVersion,
-    inputs: Vec<TransactionInput>,
+    pub inputs: Vec<TransactionInput>,
     pub outputs: Vec<TransactionOutput>,
 }
 
@@ -45,11 +46,59 @@ impl Transaction {
     pub fn get_total_fee(&self) -> u128 {
         let mut total_fee = 0;
         for output in self.outputs.iter() {
-            if !output.value.is_coin_transfer() {
+            if output.value.is_coin_transfer() {
                 total_fee += output.value.get_fee().unwrap();
             }
         }
         total_fee
+    }
+
+    // pub fn get_total_value(&self) -> u128 {
+    //     let mut total_value = 0;
+    //     for output in self.outputs.iter() {
+    //         if output.value.is_coin_transfer() {
+    //             total_fee += output.value.get_fee().unwrap();
+    //         }
+    //     }
+    //     total_fee
+    // }
+
+    fn get_sign_hash(&self) -> [u8; HASH_SIZE] {
+        let mut digest = vec![0u8; HASH_SIZE * (1 + self.outputs.len() + self.inputs.len())];
+        let mut i = 0;
+        digest[i..i + HASH_SIZE].copy_from_slice(&self.version.hash());
+        i += HASH_SIZE;
+        for input in self.inputs.iter() {
+            digest[i..i + HASH_SIZE].copy_from_slice(&input.sign_hash());
+            i += HASH_SIZE;
+        }
+        for output in self.outputs.iter() {
+            digest[i..i + HASH_SIZE].copy_from_slice(&output.hash());
+            i += HASH_SIZE;
+        }
+        let mut hash = [0u8; HASH_SIZE];
+        hash.copy_from_slice(&Sha256::digest(&digest));
+        hash
+    }
+
+    pub fn sign(&mut self, sk: SecretKey, index: usize) -> Result<bool, String> {
+        let last_index = self.inputs.len() - 1;
+        if index > last_index {
+            return Err(format!(
+                "Index out of range, expected max {} got {}",
+                last_index, index
+            ));
+        }
+        match self.inputs[index].signature {
+            Some(_) => Err(format!("Input at index {} already signed", index)),
+            None => {
+                let secp = Secp256k1::new();
+                let message =
+                    Message::from_slice(Sha256::digest(&self.get_sign_hash()).as_slice()).unwrap();
+                self.inputs[index].signature = Some(secp.sign(&message, &sk));
+                Ok(true)
+            }
+        }
     }
 }
 
@@ -66,12 +115,14 @@ impl Serialize for Transaction {
         users: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Self>, String> {
         let version = *TransactionVersion::from_serialized(&data, i, users)?;
+        let num_of_inputs = (*TransactionVarUint::from_serialized(&data, i, users)?).get_value();
         let mut inputs = Vec::new();
-        for _ in 0..(*TransactionVarUint::from_serialized(&data, i, users)?).get_value() {
+        for _ in 0..num_of_inputs {
             inputs.push(*TransactionInput::from_serialized(&data, i, users)?);
         }
+        let num_of_outputs = (*TransactionVarUint::from_serialized(&data, i, users)?).get_value();
         let mut outputs = Vec::new();
-        for _ in 0..(*TransactionVarUint::from_serialized(&data, i, users)?).get_value() {
+        for _ in 0..num_of_outputs {
             outputs.push(*TransactionOutput::from_serialized(&data, i, users)?);
         }
         Ok(Box::new(Transaction {

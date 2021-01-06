@@ -46,6 +46,10 @@ impl MerkleForest<Transaction> {
         }
     }
 
+    pub fn leaf_len(&self) -> usize {
+        self.leafs.len()
+    }
+
     pub fn add_transactions(&mut self, data: Vec<Transaction>) -> Result<bool, String> {
         for transaction in data {
             self.leafs.insert(transaction.hash()?, transaction);
