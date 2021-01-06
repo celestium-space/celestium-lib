@@ -128,22 +128,23 @@ impl Blockchain {
         self.serialize_into(&mut buffer, &mut 0)?;
         Ok(buffer)
     }
-}
 
-impl Serialize for Blockchain {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        users: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<Blockchain>, String> {
-        let blocks = Blockchain::parse_blocks(data, i, users)?;
-        Ok(Box::new(Blockchain::new(blocks)))
-    }
-
-    fn serialize_into(&self, data: &mut [u8], mut i: &mut usize) -> Result<usize, String> {
+    pub fn serialize_n_blocks(
+        &self,
+        data: &mut [u8],
+        mut i: &mut usize,
+        n: usize,
+    ) -> Result<usize, String> {
+        if n > self.blocks.len() {
+            return Err(format!(
+                "Trying to serialize more blocks than blockchain len, expected max {} got {}",
+                self.blocks.len(),
+                n
+            ));
+        }
         let mut hash = BlockHash::default();
         let orig_i = *i;
-        for block in self.blocks.iter() {
+        for block in self.blocks[0..n].iter() {
             if block.back_hash != hash {
                 return Err(format!(
                     "Block at index {} in chain has wrong back hash. Expected {} got {}",
@@ -159,6 +160,21 @@ impl Serialize for Blockchain {
             )?;
         }
         Ok(*i - orig_i)
+    }
+}
+
+impl Serialize for Blockchain {
+    fn from_serialized(
+        data: &[u8],
+        i: &mut usize,
+        users: &mut HashMap<PublicKey, User>,
+    ) -> Result<Box<Blockchain>, String> {
+        let blocks = Blockchain::parse_blocks(data, i, users)?;
+        Ok(Box::new(Blockchain::new(blocks)))
+    }
+
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+        self.serialize_n_blocks(data, i, self.blocks.len())
     }
 }
 

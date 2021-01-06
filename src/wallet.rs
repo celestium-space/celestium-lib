@@ -63,7 +63,7 @@ impl Wallet {
         }
     }
 
-    pub fn from_binary(binary_wallet: BinaryWallet) -> Result<Self, String> {
+    pub fn from_binary(binary_wallet: &BinaryWallet) -> Result<Self, String> {
         let mut users = HashMap::new();
         let pk = *PublicKey::from_serialized(&binary_wallet.pk_bin, &mut 0, &mut users)?;
         let blockchain =
@@ -571,14 +571,21 @@ impl Wallet {
         self.blockchain.add_block(block)
     }
 
-    pub fn add_serialized_block(&mut self, serialized_block: Vec<u8>) -> Result<Vec<u8>, String> {
-        self.blockchain
-            .add_serialized_block(serialized_block, &mut self.users)
+    pub fn add_serialized_blocks(&mut self, serialized_blocks: Vec<u8>) -> Result<(), String> {
+        let mut i = 0;
+        while i < serialized_blocks.len() {
+            self.blockchain.add_serialized_block(
+                serialized_blocks[i..Block::serialized_len()].to_vec(),
+                &mut self.users,
+            )?;
+            i += Block::serialized_len();
+        }
+        Ok(())
     }
 
-    pub fn get_serialized_blockchain(&self) -> Result<Vec<u8>, String> {
-        let mut buffer = vec![0; self.blockchain.serialized_len()];
-        self.blockchain.serialize_into(&mut buffer, &mut 0)?;
+    pub fn get_serialized_blockchain(&self, n: usize) -> Result<Vec<u8>, String> {
+        let mut buffer = vec![0; Block::serialized_len() * n];
+        self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
         Ok(buffer)
     }
 
