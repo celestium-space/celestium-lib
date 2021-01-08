@@ -1,20 +1,12 @@
-use crate::{
-    serialize::{Serialize, StaticSized},
-    user::User,
-};
+use crate::serialize::{Serialize, StaticSized};
 use secp256k1::{PublicKey, SecretKey};
-use std::collections::HashMap;
 
 const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
 //const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 64;
 const SECRET_KEY_SIZE: usize = 32;
 
 impl Serialize for PublicKey {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<PublicKey>, String> {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<PublicKey>, String> {
         let bytes_left = data.len() - *i;
         if bytes_left < PUBLIC_KEY_COMPRESSED_SIZE {
             return Err(format!(
@@ -37,7 +29,7 @@ impl Serialize for PublicKey {
         }
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {
             return Err(format!(
@@ -49,7 +41,7 @@ impl Serialize for PublicKey {
         let self_bytes = self.serialize();
         data[*i..*i + self_bytes.len()].copy_from_slice(&self_bytes);
         *i += self_bytes.len();
-        Ok(self_bytes.len())
+        Ok(())
     }
 }
 
@@ -60,11 +52,7 @@ impl StaticSized for PublicKey {
 }
 
 impl Serialize for SecretKey {
-    fn from_serialized(
-        secret_key: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<SecretKey>, String> {
+    fn from_serialized(secret_key: &[u8], i: &mut usize) -> Result<Box<SecretKey>, String> {
         match SecretKey::from_slice(secret_key) {
             Ok(secret_key) => {
                 *i += secret_key.len();
@@ -78,11 +66,19 @@ impl Serialize for SecretKey {
         }
     }
 
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let self_bytes = self.as_ref();
-        buffer.copy_from_slice(self_bytes);
+        let bytes_left = data.len() - *i;
+        if bytes_left < self_bytes.len() {
+            return Err(format!(
+                "Too few bytes left to serialize secret key into, expected at least {} got {}",
+                Self::serialized_len(),
+                bytes_left
+            ));
+        }
+        data.copy_from_slice(self_bytes);
         *i += self_bytes.len();
-        Ok(self_bytes.len())
+        Ok(())
     }
 }
 

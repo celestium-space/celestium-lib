@@ -66,7 +66,6 @@ impl Serialize for Magic {
     fn from_serialized(
         data: &[u8],
         i: &mut usize,
-        _: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
         if data.len() - *i < MAGIC_LEN {
             return Err(format!(
@@ -81,7 +80,7 @@ impl Serialize for Magic {
         Ok(Box::new(Magic { value }))
     }
 
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<(), String> {
         if buffer.len() - *i < MAGIC_LEN {
             return Err(format!(
                 "Cannot serialize magic, expected buffer with least {} bytes left got {}",
@@ -91,7 +90,7 @@ impl Serialize for Magic {
         };
         buffer[*i..*i + MAGIC_LEN].copy_from_slice(&self.value);
         *i += MAGIC_LEN;
-        Ok(MAGIC_LEN)
+        Ok(())
     }
 }
 

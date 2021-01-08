@@ -1,6 +1,5 @@
 use crate::{
     serialize::{Serialize, StaticSized},
-    user::User,
 };
 use secp256k1::PublicKey;
 use std::collections::HashMap;
@@ -24,7 +23,6 @@ impl Serialize for BlockVersion {
     fn from_serialized(
         data: &[u8],
         i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
     ) -> Result<Box<Self>, String> {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {

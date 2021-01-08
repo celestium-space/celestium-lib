@@ -4,7 +4,6 @@ use crate::{
     magic::Magic,
     merkle_forest,
     serialize::{Serialize, StaticSized},
-    user::User,
 };
 use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
@@ -40,14 +39,6 @@ impl Block {
         hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
         hash
     }
-
-    // pub fn get_user_data_change(&mut self, pk: &mut PublicKey) -> Result<i32, String> {
-    //     let mut tmp_data = 0;
-    //     for transaction_block in self.transaction_blocks.iter_mut() {
-    //         tmp_data += transaction_block.get_user_data_change(pk)?;
-    //     }
-    //     Ok(tmp_data)
-    // }
 }
 
 impl Serialize for Block {
@@ -72,7 +63,7 @@ impl Serialize for Block {
         Ok(Box::new(Block::new(version, merkle_root, back_hash, magic)))
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {
             return Err(format!(
@@ -86,7 +77,7 @@ impl Serialize for Block {
         self.merkle_root.serialize_into(data, i)?;
         self.back_hash.serialize_into(data, i)?;
         self.magic.serialize_into(data, i)?;
-        Ok(*i - start_i)
+        Ok(())
     }
 }
 

@@ -3,38 +3,42 @@ use crate::{
     block_hash::BlockHash,
     block_version::BlockVersion,
     magic::Magic,
-    serialize::{DynamicSized, Serialize, StaticSized},
-    user::User,
     merkle_forest::HASH_SIZE,
+    serialize::{DynamicSized, Serialize, StaticSized},
 };
-use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 pub struct Blockchain {
-    blocks: Vec<Block>,
+    blocks: HashMap<[u8; HASH_SIZE], Block>,
+    head: Option<[u8; HASH_SIZE]>,
 }
 
 impl Blockchain {
     pub fn new(blocks: Vec<Block>) -> Blockchain {
-        Blockchain { blocks }
+        let head = match blocks.last() {
+            Some(h) => Some(h.hash()),
+            None => None,
+        };
+        Blockchain {
+            blocks: blocks
+                .iter()
+                .map(|x| (x.hash(), *x))
+                .collect::<HashMap<[u8; HASH_SIZE], Block>>(),
+            head,
+        }
     }
 
-    fn parse_blocks(
-        data: &[u8],
-        mut i: &mut usize,
-        users: &mut HashMap<PublicKey, User>,
-    ) -> Result<Vec<Block>, String> {
+    fn parse_blocks(data: &[u8], mut i: &mut usize) -> Result<Vec<Block>, String> {
         let mut hash = BlockHash::default();
         let mut tmp_blocks = Vec::new();
         while *i < data.len() {
-            let block = *Block::from_serialized(&data, &mut i, users)?;
+            let block = *Block::from_serialized(&data, &mut i)?;
             if block.back_hash == hash {
                 let block_len = Block::serialized_len();
                 hash = *BlockHash::from_serialized(
                     Sha256::digest(&data[*i - block_len..*i]).as_slice(),
                     &mut 0,
-                    users,
                 )?;
                 let valid_hash = hash.contains_enough_work();
                 if !valid_hash {
@@ -62,23 +66,17 @@ impl Blockchain {
         self.blocks.is_empty()
     }
 
-    pub fn create_unmined_block(
-        &self,
-        merkle_root: BlockHash,
-    ) -> Result<Vec<u8>, String> {
+    pub fn create_unmined_block(&self, merkle_root: BlockHash) -> Result<Vec<u8>, String> {
         let back_hash;
-        if !self.blocks.is_empty() {
+        if !self.blocks.is_empty() || self.head.is_some() {
             let mut last_block_serialized = vec![0; Block::serialized_len()];
             let mut i = 0;
             self.blocks
-                .last()
+                .get(&self.head.unwrap())
                 .unwrap()
-                .serialize_into(&mut last_block_serialized, &mut i)?;
-            back_hash = *BlockHash::from_serialized(
-                &Sha256::digest(&last_block_serialized[..i]),
-                &mut 0,
-                &mut HashMap::new(),
-            )?;
+                .serialize_into(&mut last_block_serialized, &mut i);
+            back_hash =
+                *BlockHash::from_serialized(&Sha256::digest(&last_block_serialized[..i]), &mut 0)?;
         } else {
             back_hash = BlockHash::default();
         }
@@ -89,31 +87,35 @@ impl Blockchain {
             Magic::new(0),
         );
         let mut unmined_serialized_block = vec![0u8; Block::serialized_len()];
-        unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0)?;
+        unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0);
         Ok(unmined_serialized_block)
     }
 
     pub fn get_head_hash(&self) -> Result<[u8; 32], String> {
-        match self.blocks.last() {
-            Some(b) => Ok(b.hash()),
+        match self.head {
+            Some(h) => Ok(h),
             None => Err(String::from("Cannot get head from empty blockchain")),
         }
     }
 
-    pub fn add_block(&mut self, block: Block) -> Result<usize, String> {
-        self.blocks.push(block);
-        Ok(self.blocks.len())
+    pub fn add_block(&mut self, block: Block) -> Result<[u8; HASH_SIZE], String> {
+        if self.head.is_some() && block.back_hash.hash() != self.head.unwrap() {
+            Err(format!(
+                "New block not pointing at old head, expected backhash {:?} got {:?}",
+                self.head.unwrap(),
+                block.back_hash.hash()
+            ))
+        } else {
+            let hash = block.hash();
+            self.blocks.insert(hash, block);
+            self.head = Some(hash);
+            Ok(block.merkle_root.hash())
+        }
     }
 
-    pub fn add_serialized_block(
-        &mut self,
-        block: Vec<u8>,
-        users: &mut HashMap<PublicKey, User>,
-    ) -> Result<[u8; HASH_SIZE], String> {
-        let block = *Block::from_serialized(&block, &mut 0, users)?;
-        let merkle_root = block.merkle_root.hash();
-        self.blocks.push(block);
-        Ok(merkle_root)
+    pub fn add_serialized_block(&mut self, block: Vec<u8>) -> Result<[u8; HASH_SIZE], String> {
+        let block = *Block::from_serialized(&block, &mut 0)?;
+        self.add_block(block)
     }
 
     pub fn serialize_n_blocks(
@@ -121,7 +123,7 @@ impl Blockchain {
         data: &mut [u8],
         mut i: &mut usize,
         n: usize,
-    ) -> Result<usize, String> {
+    ) -> Result<(), String> {
         if n > self.blocks.len() {
             return Err(format!(
                 "Trying to serialize more blocks than blockchain len, expected max {} got {}",
@@ -129,38 +131,38 @@ impl Blockchain {
                 n
             ));
         }
-        let mut hash = BlockHash::default();
-        let orig_i = *i;
-        for block in self.blocks[0..n].iter() {
-            if block.back_hash != hash {
-                return Err(format!(
-                    "Block at index {} in chain has wrong back hash. Expected {} got {}",
-                    i, hash, block.back_hash
-                ));
+        match self.head {
+            Some(head) => {
+                let hash = head;
+                let orig_i = *i;
+                for j in 0..n {
+                    match self.blocks.get(&hash) {
+                        Some(block) => {
+                            block.serialize_into(data, &mut i)?;
+                            hash = block.back_hash.hash();
+                        }
+                        None => {
+                            return Err(format!(
+                                "Reached end of blockchain before time, expected {} got {}",
+                                n, j
+                            ))
+                        }
+                    }
+                }
             }
-            let pre_i = *i;
-            block.serialize_into(data, &mut i)?;
-            hash = *BlockHash::from_serialized(
-                &Sha256::digest(&data[pre_i..*i]),
-                &mut 0,
-                &mut HashMap::new(),
-            )?;
-        }
-        Ok(*i - orig_i)
+            None => return Err(String::from("Cannot serialize empty blockchain")),
+        };
+        Ok(())
     }
 }
 
 impl Serialize for Blockchain {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        users: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<Blockchain>, String> {
-        let blocks = Blockchain::parse_blocks(data, i, users)?;
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Blockchain>, String> {
+        let blocks = Blockchain::parse_blocks(data, i)?;
         Ok(Box::new(Blockchain::new(blocks)))
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         self.serialize_n_blocks(data, i, self.blocks.len())
     }
 }

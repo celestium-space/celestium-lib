@@ -25,7 +25,6 @@ impl Serialize for TransactionVersion {
     fn from_serialized(
         data: &[u8],
         i: &mut usize,
-        _: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
         if data[*i] != 0 {
             Err(format!("Expected transaction version 0 found {}", data[*i]))
@@ -37,10 +36,10 @@ impl Serialize for TransactionVersion {
         }
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         data[*i] = self.value[0];
         *i += 1;
-        Ok(1)
+        Ok(())
     }
 }
 

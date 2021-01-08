@@ -20,14 +20,14 @@ pub struct TransactionInput {
 impl TransactionInput {
     pub fn from_transaction(transaction: Transaction, index: TransactionVarUint) -> Self {
         TransactionInput {
-            tx: transaction.hash().unwrap(),
+            tx: transaction.hash(),
             index,
             signature: None,
         }
     }
 
-    pub fn hash(&self) -> [u8; 32] {
-        let mut hash = [0u8; 32];
+    pub fn hash(&self) -> [u8; HASH_SIZE] {
+        let mut hash = [0u8; HASH_SIZE];
         let mut self_serialized = vec![0u8; self.serialized_len()];
         self.serialize_into(&mut self_serialized, &mut 0).unwrap();
         hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
@@ -35,7 +35,7 @@ impl TransactionInput {
     }
 
     pub fn sign_hash(&self) -> [u8; HASH_SIZE] {
-        let mut hash = [0u8; 32];
+        let mut hash = [0u8; HASH_SIZE];
         let mut self_serialized = vec![0u8; HASH_SIZE + self.index.serialized_len()];
         self_serialized[0..HASH_SIZE].copy_from_slice(&self.tx);
         let mut i = HASH_SIZE;
@@ -54,15 +54,11 @@ impl PartialEq for TransactionInput {
 }
 
 impl Serialize for TransactionInput {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        users: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
-    ) -> Result<Box<Self>, String> {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
         let mut tx = [0u8; HASH_SIZE];
         tx.copy_from_slice(&data[*i..*i + HASH_SIZE]);
         *i += HASH_SIZE;
-        let index = *TransactionVarUint::from_serialized(data, i, users)?;
+        let index = *TransactionVarUint::from_serialized(data, i)?;
         match Signature::from_compact(&data[*i..*i + SECP256K1_SIG_LEN]) {
             Ok(signature) => {
                 *i += signature.serialize_compact().len();
@@ -76,30 +72,24 @@ impl Serialize for TransactionInput {
         }
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        match self.signature {
-            Some(signature) => {
-                let bytes_left = data.len() - *i;
-                if bytes_left < self.serialized_len() {
-                    return Err(format!(
-                        "Too few bytes left for serializing transaction input, expected at least {} got {}",
-                        self.serialized_len(),
-                        bytes_left
-                    ));
-                }
-                let pre_i = *i;
-                data[*i..*i + HASH_SIZE].copy_from_slice(&self.tx);
-                *i += HASH_SIZE;
-                self.index.serialize_into(data, i)?;
-                let compact_signature = signature.serialize_compact();
-                data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
-                *i += compact_signature.len();
-                Ok(*i - pre_i)
-            }
-            None => Err(String::from(
-                "Cannot serialize transaction input with missing signature",
-            )),
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
+        let bytes_left = data.len() - *i;
+        if bytes_left < self.serialized_len() {
+            return Err(format!(
+                "Too few bytes left for serializing transaction input, expected at least {} got {}",
+                self.serialized_len(),
+                bytes_left
+            ));
         }
+        let pre_i = *i;
+        data[*i..*i + HASH_SIZE].copy_from_slice(&self.tx);
+        *i += HASH_SIZE;
+        self.index.serialize_into(data, i)?;
+        let signature = self.signature.unwrap_or_default();
+        let compact_signature = signature.serialize_compact();
+        data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
+        *i += compact_signature.len();
+        Ok(())
     }
 }
 

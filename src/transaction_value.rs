@@ -2,14 +2,8 @@ use crate::{
     merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
     transaction_varuint::TransactionVarUint,
-    user::User,
 };
-use secp256k1::PublicKey;
-use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    fmt::{self, Display, Formatter},
-};
+use std::fmt::{self, Display, Formatter};
 
 const TRANSACTION_ID_LEN: usize = TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
 const TRANSACTION_FEE_LEN: usize = 16;
@@ -134,12 +128,8 @@ impl Display for TransactionValue {
 }
 
 impl Serialize for TransactionValue {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<TransactionValue>, String> {
-        let version = *TransactionVarUint::from_serialized(data, i, &mut HashMap::new())?;
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<TransactionValue>, String> {
+        let version = *TransactionVarUint::from_serialized(data, i)?;
         let bytes_left = data.len() - *i;
         if bytes_left < TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN {
             return Err(format!(
@@ -154,7 +144,7 @@ impl Serialize for TransactionValue {
         Ok(Box::new(TransactionValue { version, value }))
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
         if bytes_left < self.serialized_len() {
             return Err(format!(
@@ -165,7 +155,7 @@ impl Serialize for TransactionValue {
         self.version.serialize_into(data, i)?;
         data[*i..*i + TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN].copy_from_slice(&self.value);
         *i += TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
-        Ok(self.serialized_len())
+        Ok(())
     }
 }
 

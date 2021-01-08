@@ -42,7 +42,6 @@ impl Serialize for TransactionVarUint {
     fn from_serialized(
         data: &[u8],
         i: &mut usize,
-        _: &mut std::collections::HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<Box<Self>, String> {
         let pre_i = *i;
         while data[*i] > 0x7 {
@@ -54,7 +53,7 @@ impl Serialize for TransactionVarUint {
         Ok(Box::new(TransactionVarUint { value }))
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
         if bytes_left < self.serialized_len() {
             return Err(format!(
@@ -65,7 +64,7 @@ impl Serialize for TransactionVarUint {
         }
         data[*i..*i + self.serialized_len()].copy_from_slice(&self.value);
         *i += self.serialized_len();
-        Ok(self.serialized_len())
+        Ok(())
     }
 }
 

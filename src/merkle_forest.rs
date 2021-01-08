@@ -46,13 +46,51 @@ impl MerkleForest<Transaction> {
         }
     }
 
+    pub fn new_complete_from_serialized_leafs(serialized_leafs: Vec<u8>) -> Result<Self, String> {
+        let i = 0;
+        let leafs = Vec::new();
+        while i < serialized_leafs.len() {
+            leafs.push(*Transaction::from_serialized(&serialized_leafs, &mut i)?);
+        }
+
+        let branches = HashMap::new();
+        let mut branch_queue = leafs
+            .iter()
+            .map(|x| x.hash())
+            .collect::<Vec<[u8; HASH_SIZE]>>();
+        while branch_queue.len() > 1 {
+            let mut tmp_branch_queue = Vec::new();
+            for leaf_pair in branch_queue.chunks(2) {
+                if leaf_pair.len() == 2 {
+                    let node = Node::new(leaf_pair[0], leaf_pair[1]);
+                    match branches.insert(node.hash(), node) {
+                        Some(_) => return Err(String::from("Could not insert node")),
+                        _ => {}
+                    };
+                    tmp_branch_queue.push(node.hash());
+                } else {
+                    tmp_branch_queue.push(leaf_pair[0]);
+                }
+            }
+            branch_queue = tmp_branch_queue;
+        }
+
+        Ok(MerkleForest {
+            leafs: leafs
+                .iter()
+                .map(|x| (x.hash(), *x))
+                .collect::<HashMap<[u8; HASH_SIZE], Transaction>>(),
+            branches,
+        })
+    }
+
     pub fn leaf_len(&self) -> usize {
         self.leafs.len()
     }
 
     pub fn add_transactions(&mut self, data: Vec<Transaction>) -> Result<bool, String> {
         for transaction in data {
-            self.leafs.insert(transaction.hash()?, transaction);
+            self.leafs.insert(transaction.hash(), transaction);
         }
         Ok(true)
     }
@@ -61,11 +99,10 @@ impl MerkleForest<Transaction> {
         &mut self,
         data: &[u8],
         i: &mut usize,
-        users: &mut HashMap<secp256k1::PublicKey, crate::user::User>,
     ) -> Result<bool, String> {
         while *i < data.len() {
-            let transaction = *Transaction::from_serialized(&data, i, users)?;
-            self.leafs.insert(transaction.hash()?, transaction);
+            let transaction = *Transaction::from_serialized(&data, i)?;
+            self.leafs.insert(transaction.hash(), transaction);
         }
         Ok(true)
     }
@@ -89,24 +126,6 @@ impl MerkleForest<Transaction> {
         Ok(true)
     }
 
-    // pub fn add_serialized_transactions(
-    //     &mut self,
-    //     data: &[u8],
-    //     users: &mut HashMap<secp256k1::PublicKey, crate::user::User>,
-    // ) -> Result<Vec<Transaction>, String> {
-    //     let mut transactions = Vec::new();
-    //     let mut i = 0;
-    //     while i < data.len() {
-    //         let pre_i = i;
-    //         let mut hash = [0; 32];
-    //         hash.copy_from_slice(Sha256::digest(&data[pre_i..i]).as_slice());
-    //         self.leafs
-    //             .insert(hash, *Transaction::from_serialized(&data, &mut i, users)?);
-    //         transactions.push(*Transaction::from_serialized(&data, &mut i, users)?);
-    //     }
-    //     Ok(transactions)
-    // }
-
     pub fn serialize_all_transactions(&self) -> Result<Vec<u8>, String> {
         let mut transaction_len = 0;
         for (_, transaction) in self.leafs.iter() {
@@ -115,7 +134,7 @@ impl MerkleForest<Transaction> {
         let mut serialized = vec![0; transaction_len];
         let mut i = 0;
         for (_, transaction) in self.leafs.iter() {
-            transaction.serialize_into(&mut serialized, &mut i)?;
+            transaction.serialize_into(&mut serialized, &mut i);
         }
         Ok(serialized)
     }
@@ -199,9 +218,9 @@ impl MerkleForest<Transaction> {
     }
 
     pub fn add_leaf(&mut self, leaf: Transaction) -> Result<bool, String> {
-        match self.leafs.get(&leaf.hash()?) {
+        match self.leafs.get(&leaf.hash()) {
             Some(_) => Err(String::from("Leaf already exists")),
-            None => match self.leafs.insert(leaf.hash()?, leaf) {
+            None => match self.leafs.insert(leaf.hash(), leaf) {
                 Some(_) => Err(String::from("Could not insert leaf")),
                 None => Ok(true),
             },
@@ -218,42 +237,42 @@ impl MerkleForest<Transaction> {
         }
     }
 
+    pub fn add_merkle_tree(&self, merkle_tree: MerkleForest<Transaction>) -> Result<(), String> {
+        self.leafs.extend(merkle_tree.leafs);
+        self.branches.extend(merkle_tree.branches);
+        Ok(())
+    }
+
     pub fn get_merkle_tree(&self, root: [u8; 32]) -> Result<(Vec<Node>, Vec<Transaction>), String> {
         match self.branches.get(&root) {
             Some(node) => {
                 let (n1, t1) = self.get_merkle_tree(node.right)?;
                 let (n2, t2) = self.get_merkle_tree(node.left)?;
-                Ok(([[node.clone()].to_vec(), n1, n2].concat(), [t1, t2].concat()))
-            },
+                Ok((
+                    [[node.clone()].to_vec(), n1, n2].concat(),
+                    [t1, t2].concat(),
+                ))
+            }
             None => match self.leafs.get(&root) {
                 Some(b) => Ok((Vec::new(), vec![b.clone(); 1])),
-                None => Err(String::from("Uncomplete tree")) 
-            }
+                None => Err(String::from("Uncomplete tree")),
+            },
         }
     }
 
-    pub fn get_merkle_forest(&mut self, roots: Vec<[u8; 32]>) -> Result<(Vec<Node>, Vec<Transaction>), String> {
+    pub fn get_merkle_forest(
+        &mut self,
+        roots: Vec<[u8; 32]>,
+    ) -> Result<(Vec<Node>, Vec<Transaction>), String> {
         let mut nodes = Vec::new();
         let mut transactions = Vec::new();
-        for root in roots{
+        for root in roots {
             let (mut root_nodes, mut root_transactions) = self.get_merkle_tree(root)?;
             nodes.append(&mut root_nodes);
             transactions.append(&mut root_transactions);
         }
         Ok((nodes, transactions))
     }
-
-    // fn un_rooted_leafs(&self, known_roots) -> Vec<TransactionBlock> {
-
-    // }
-
-    // fn get<TransactionBlock>(&self, hash: [u8; HASH_SIZE]) -> Option<&TransactionBlock> {
-    //     self.leafs.get(&hash)
-    // }
-
-    // fn get<Node>(&self, hash: [u8; HASH_SIZE]) -> Option<Node> {
-    //     self.nodes.get(hash)
-    // }
 
     pub fn is_complete(&self, root: [u8; HASH_SIZE]) -> Result<usize, String> {
         let found_node = self.branches.get(&root);
@@ -269,7 +288,7 @@ impl MerkleForest<Transaction> {
                 }
             }
             (None, Some(_)) => Ok(0),
-            _ => Err(format!("Missing node with hash  {:?}", root)),
+            _ => Err(format!("Missing node with hash {:?}", root)),
         }
     }
 }

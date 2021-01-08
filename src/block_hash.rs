@@ -1,12 +1,5 @@
-use crate::{
-    serialize::{Serialize, StaticSized},
-    user::User,
-};
-use secp256k1::PublicKey;
-use std::{
-    collections::HashMap,
-    fmt::{self, Display, Formatter},
-};
+use crate::serialize::{Serialize, StaticSized};
+use std::fmt::{self, Display, Formatter};
 
 const BLOCK_HASH_SIZE: usize = 32;
 
@@ -31,7 +24,7 @@ impl BlockHash {
         self.value == [0; 32]
     }
 
-    pub fn hash(&self) -> [u8; BLOCK_HASH_SIZE]{
+    pub fn hash(&self) -> [u8; BLOCK_HASH_SIZE] {
         self.value.clone()
     }
 }
@@ -55,11 +48,7 @@ impl Display for BlockHash {
 }
 
 impl Serialize for BlockHash {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        _: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<BlockHash>, String> {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<BlockHash>, String> {
         if data.len() - *i < 32 {
             return Err(format!(
                 "Cannot deserialize hash, expected buffer with least 32 bytes left got {}",
@@ -72,10 +61,9 @@ impl Serialize for BlockHash {
         Ok(Box::new(BlockHash { value: hash }))
     }
 
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) {
         buffer[*i..*i + 32].copy_from_slice(&self.value);
         *i += BlockHash::serialized_len();
-        Ok(BlockHash::serialized_len())
     }
 }
 
