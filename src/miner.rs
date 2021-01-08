@@ -8,7 +8,6 @@ use crate::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
     future::Future,
     ops::Range,
     task::{Context, Poll},
@@ -35,7 +34,7 @@ impl Miner {
         start: u64,
         end: u64,
     ) -> Result<Self, String> {
-        let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0, &mut HashMap::new())?;
+        let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0)?;
         let magic = Magic::new(0);
         let block = Block::new(version, merkle_root, back_hash, magic);
         let mut block_serialized = vec![0u8; Block::serialized_len()];
@@ -96,13 +95,10 @@ impl Miner {
         let hash = *BlockHash::from_serialized(
             Sha256::digest(&self.my_serialized_block).as_slice(),
             &mut 0,
-            &mut HashMap::new(),
         )
         .unwrap();
         if hash.contains_enough_work() {
-            let block =
-                *Block::from_serialized(&self.my_serialized_block, &mut 0, &mut HashMap::new())
-                    .unwrap();
+            let block = *Block::from_serialized(&self.my_serialized_block, &mut 0).unwrap();
             Poll::Ready(Some(block))
         } else if self.i < self.end {
             self.current_magic.increase();

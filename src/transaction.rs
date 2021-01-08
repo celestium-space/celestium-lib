@@ -37,7 +37,7 @@ impl Transaction {
         let mut data = vec![0; self.serialized_len()];
         self.serialize_into(&mut data, &mut 0).unwrap();
         let mut hash = [0; 32];
-        hash.copy_from_slice(&Sha256::digest(&data)).unwrap();
+        hash.copy_from_slice(&Sha256::digest(&data));
         hash
     }
 

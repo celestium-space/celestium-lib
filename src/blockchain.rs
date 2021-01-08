@@ -23,7 +23,7 @@ impl Blockchain {
         Blockchain {
             blocks: blocks
                 .iter()
-                .map(|x| (x.hash(), *x))
+                .map(|x| (x.hash(), x.clone()))
                 .collect::<HashMap<[u8; HASH_SIZE], Block>>(),
             head,
         }
@@ -74,7 +74,7 @@ impl Blockchain {
             self.blocks
                 .get(&self.head.unwrap())
                 .unwrap()
-                .serialize_into(&mut last_block_serialized, &mut i);
+                .serialize_into(&mut last_block_serialized, &mut i)?;
             back_hash =
                 *BlockHash::from_serialized(&Sha256::digest(&last_block_serialized[..i]), &mut 0)?;
         } else {
@@ -87,7 +87,7 @@ impl Blockchain {
             Magic::new(0),
         );
         let mut unmined_serialized_block = vec![0u8; Block::serialized_len()];
-        unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0);
+        unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0)?;
         Ok(unmined_serialized_block)
     }
 
@@ -107,15 +107,20 @@ impl Blockchain {
             ))
         } else {
             let hash = block.hash();
+            let merkle_root = block.merkle_root.hash();
             self.blocks.insert(hash, block);
             self.head = Some(hash);
-            Ok(block.merkle_root.hash())
+            Ok(merkle_root)
         }
     }
 
     pub fn add_serialized_block(&mut self, block: Vec<u8>) -> Result<[u8; HASH_SIZE], String> {
         let block = *Block::from_serialized(&block, &mut 0)?;
         self.add_block(block)
+    }
+
+    pub fn contains_block(&self, hash: [u8; 32]) -> bool {
+        self.blocks.contains_key(&hash)
     }
 
     pub fn serialize_n_blocks(
@@ -133,8 +138,7 @@ impl Blockchain {
         }
         match self.head {
             Some(head) => {
-                let hash = head;
-                let orig_i = *i;
+                let mut hash = head;
                 for j in 0..n {
                     match self.blocks.get(&hash) {
                         Some(block) => {

@@ -26,21 +26,16 @@ impl TransactionOutput {
 }
 
 impl Serialize for TransactionOutput {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        users: &mut std::collections::HashMap<PublicKey, crate::user::User>,
-    ) -> Result<Box<Self>, String> {
-        let value = *TransactionValue::from_serialized(data, i, users)?;
-        let pk = *PublicKey::from_serialized(data, i, users)?;
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
+        let value = *TransactionValue::from_serialized(data, i)?;
+        let pk = *PublicKey::from_serialized(data, i)?;
         Ok(Box::new(TransactionOutput { value, pk }))
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
-        let pre_i = *i;
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         self.value.serialize_into(data, i)?;
         self.pk.serialize_into(data, i)?;
-        Ok(*i - pre_i)
+        Ok(())
     }
 }
 

@@ -13,7 +13,6 @@ pub mod transaction_output;
 pub mod transaction_value;
 pub mod transaction_varuint;
 pub mod transaction_version;
-pub mod user;
 pub mod wallet;
 
 #[cfg(test)]

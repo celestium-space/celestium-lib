@@ -39,23 +39,11 @@ pub struct Wallet {
     unspent_outputs: Vec<(Transaction, TransactionVarUint)>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
     off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
+    is_miner: bool,
 }
 
 impl Wallet {
-    pub fn new_empty(blockchain: Blockchain, pk: PublicKey, sk: SecretKey) -> Self {
-        Wallet {
-            blockchain,
-            pk: Some(pk),
-            sk: Some(sk),
-            blockchain_merkle_forest: MerkleForest::new_empty(),
-            unspent_outputs: Vec::new(),
-            root_lookup: HashMap::new(),
-            off_chain_transactions: HashMap::new(),
-        }
-    }
-
-    pub fn default() -> Self {
-        let (pk, sk) = Wallet::generate_ec_keys();
+    pub fn default(pk: PublicKey, sk: SecretKey) -> Self {
         Wallet {
             blockchain: Blockchain::new(Vec::new()),
             pk: Some(pk),
@@ -64,10 +52,24 @@ impl Wallet {
             unspent_outputs: Vec::new(),
             root_lookup: HashMap::new(),
             off_chain_transactions: HashMap::new(),
+            is_miner: false,
         }
     }
 
-    pub fn from_binary(binary_wallet: &BinaryWallet) -> Result<Self, String> {
+    pub fn default_miner(pk: PublicKey, sk: SecretKey) -> Self {
+        Wallet {
+            blockchain: Blockchain::new(Vec::new()),
+            pk: Some(pk),
+            sk: Some(sk),
+            blockchain_merkle_forest: MerkleForest::new_empty(),
+            unspent_outputs: Vec::new(),
+            root_lookup: HashMap::new(),
+            off_chain_transactions: HashMap::new(),
+            is_miner: true,
+        }
+    }
+
+    pub fn from_binary(binary_wallet: &BinaryWallet, is_miner: bool) -> Result<Self, String> {
         let pk = *PublicKey::from_serialized(&binary_wallet.pk_bin, &mut 0)?;
         let blockchain = *Blockchain::from_serialized(&binary_wallet.blockchain_bin, &mut 0)?;
         let mut merkle_forest = MerkleForest::new_empty();
@@ -105,6 +107,7 @@ impl Wallet {
             unspent_outputs,
             root_lookup,
             off_chain_transactions,
+            is_miner,
         })
     }
 
@@ -112,11 +115,12 @@ impl Wallet {
         match (self.pk, self.sk) {
             (Some(pk), Some(sk)) => {
                 let mut blockchain_bin = vec![0u8; self.blockchain.serialized_len()];
-                self.blockchain.serialize_into(&mut blockchain_bin, &mut 0);
+                self.blockchain
+                    .serialize_into(&mut blockchain_bin, &mut 0)?;
                 let mut pk_bin = vec![0u8; PublicKey::serialized_len()];
-                pk.serialize_into(&mut pk_bin, &mut 0);
+                pk.serialize_into(&mut pk_bin, &mut 0)?;
                 let mut sk_bin = vec![0u8; SecretKey::serialized_len()];
-                sk.serialize_into(&mut sk_bin, &mut 0);
+                sk.serialize_into(&mut sk_bin, &mut 0)?;
                 let mf_branches_bin = self.blockchain_merkle_forest.serialize_all_nodes()?;
                 let mf_leafs_bin = self.blockchain_merkle_forest.serialize_all_transactions()?;
                 let mut unspent_outputs_bin = Vec::new();
@@ -125,8 +129,8 @@ impl Wallet {
                     let mut unspent_output_bin =
                         vec![0u8; transaction.serialized_len() + index.serialized_len()];
                     let mut i = 0;
-                    transaction.serialize_into(&mut unspent_output_bin, &mut i);
-                    index.serialize_into(&mut unspent_output_bin, &mut i);
+                    transaction.serialize_into(&mut unspent_output_bin, &mut i)?;
+                    index.serialize_into(&mut unspent_output_bin, &mut i)?;
                     unspent_outputs_bin.append(&mut unspent_output_bin);
                 }
                 let mut root_lookup_bin = vec![0u8; self.root_lookup.len() * HASH_SIZE * 2];
@@ -140,7 +144,7 @@ impl Wallet {
                 let mut off_chain_transactions_bin = Vec::new();
                 for transaction in self.off_chain_transactions.values() {
                     let mut transaction_bin = vec![0u8; transaction.serialized_len()];
-                    transaction.serialize_into(&mut transaction_bin, &mut 0);
+                    transaction.serialize_into(&mut transaction_bin, &mut 0)?;
                     off_chain_transactions_bin.append(&mut transaction_bin);
                 }
                 Ok(BinaryWallet {
@@ -203,7 +207,7 @@ impl Wallet {
     > {
         let mut dust_gathered = 0;
         let mut outputs = Vec::new();
-        let mut cloned = self.unspent_outputs.clone();
+        let cloned = self.unspent_outputs.clone();
         // cloned.sort_by(|(a, _), (b, _)| { //TODO: Sort outputs by block index
         //     let block_a = self
         //         .blockchain
@@ -234,7 +238,7 @@ impl Wallet {
         Ok((dust_gathered, inputs, outputs))
     }
 
-    pub fn add_off_chain_transaction(&mut self, transaction: Transaction)  -> Result<(), String> {
+    pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
         self.off_chain_transactions
             .insert(transaction.hash(), transaction);
         Ok(())
@@ -263,8 +267,8 @@ impl Wallet {
             }
             let transaction_len = transaction.serialized_len();
             let mut serialized_transaction = vec![0u8; transaction_len];
-            transaction.serialize_into(&mut serialized_transaction, &mut 0);
-            self.add_off_chain_transaction(transaction);
+            transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
+            self.add_off_chain_transaction(transaction)?;
             Ok(serialized_transaction)
         } else {
             Err(String::from("Send ID not implented"))
@@ -361,12 +365,12 @@ impl Wallet {
         Ok(transactions)
     }
 
-    pub fn add_block(&mut self, block: Block) -> Result<usize, String> {
+    pub fn add_block(&mut self, block: Block) -> Result<[u8; HASH_SIZE], String> {
         self.blockchain.add_block(block)
     }
 
     pub fn contains_block(&mut self, hash: [u8; HASH_SIZE]) -> bool {
-        self.blockchain
+        self.blockchain.contains_block(hash)
     }
 
     pub fn add_serialized_blocks(
@@ -405,10 +409,10 @@ impl Wallet {
             }
         }
         for block in tmp_blocks {
-            self.blockchain.add_block(block);
+            self.blockchain.add_block(block)?;
         }
         for merkle_tree in tmp_merkle_forest {
-            self.blockchain_merkle_forest.add_merkle_tree(merkle_tree);
+            self.blockchain_merkle_forest.add_merkle_tree(merkle_tree)?;
         }
         Ok(())
     }
@@ -422,6 +426,7 @@ impl Wallet {
     pub fn generate_test_blockchain(
         serialized_pk: Vec<u8>,
         serialized_sk: Vec<u8>,
+        is_miner: bool,
     ) -> Result<Wallet, String> {
         let pk1 = *PublicKey::from_serialized(&serialized_pk, &mut 0)?;
         let sk1 = *SecretKey::from_serialized(&serialized_sk, &mut 0)?;
@@ -440,19 +445,24 @@ impl Wallet {
 
         let b0 = Block::new(
             BlockVersion::default(),
-            *BlockHash::from_serialized(&t0.hash()?, &mut 0)?,
+            *BlockHash::from_serialized(&t0.hash(), &mut 0)?,
             BlockHash::default(),
             Magic::new(0),
         );
 
         let mut b0_serialized = vec![0u8; Block::serialized_len()];
-        b0.serialize_into(&mut b0_serialized, &mut 0);
+        b0.serialize_into(&mut b0_serialized, &mut 0)?;
         let mut miner = Miner::new_ranged(b0_serialized, 0..u64::MAX, [t0].to_vec());
         let mut wallet;
         match Wallet::mine_until_complete(&mut miner) {
             Some(b) => {
                 let block_hash = b.hash();
-                wallet = Wallet::new_empty(Blockchain::new([b].to_vec()), pk1, sk1);
+                if !is_miner {
+                    wallet = Wallet::default(pk1, sk1);
+                } else {
+                    wallet = Wallet::default_miner(pk1, sk1);
+                }
+                wallet.add_block(b)?;
                 wallet.add_on_chain_transactions(miner.transactions, block_hash)?;
             }
             None => return Err(String::from("Could not mine first block")),
@@ -469,7 +479,7 @@ impl Wallet {
         }
     }
 
-    fn generate_ec_keys() -> (PublicKey, SecretKey) {
+    pub fn generate_ec_keys() -> (PublicKey, SecretKey) {
         let secp = Secp256k1::new();
         let mut rng = rand::thread_rng();
         let (sk, pk) = secp.generate_keypair(&mut rng);

@@ -1,8 +1,4 @@
-use crate::{
-    serialize::{Serialize, StaticSized},
-};
-use secp256k1::PublicKey;
-use std::collections::HashMap;
+use crate::serialize::{Serialize, StaticSized};
 
 const BLOCK_VERSION_LEN: usize = 4;
 
@@ -20,10 +16,7 @@ impl BlockVersion {
 }
 
 impl Serialize for BlockVersion {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-    ) -> Result<Box<Self>, String> {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {
             return Err(format!(
@@ -38,7 +31,7 @@ impl Serialize for BlockVersion {
         Ok(Box::new(BlockVersion { value }))
     }
 
-    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<usize, String> {
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {
             return Err(format!(
@@ -49,7 +42,7 @@ impl Serialize for BlockVersion {
         }
         data[*i..*i + Self::serialized_len()].copy_from_slice(&self.value);
         *i += Self::serialized_len();
-        Ok(Self::serialized_len())
+        Ok(())
     }
 }
 

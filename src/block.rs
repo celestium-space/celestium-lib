@@ -5,9 +5,7 @@ use crate::{
     merkle_forest,
     serialize::{Serialize, StaticSized},
 };
-use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct Block {
@@ -42,11 +40,7 @@ impl Block {
 }
 
 impl Serialize for Block {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-        users: &mut HashMap<PublicKey, User>,
-    ) -> Result<Box<Block>, String> {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Block>, String> {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {
             return Err(format!(
@@ -55,10 +49,10 @@ impl Serialize for Block {
                 Block::serialized_len()
             ));
         }
-        let version = *BlockVersion::from_serialized(data, i, users)?;
-        let merkle_root = *BlockHash::from_serialized(data, i, users)?;
-        let back_hash = *BlockHash::from_serialized(data, i, users)?;
-        let magic = *Magic::from_serialized(data, i, users)?;
+        let version = *BlockVersion::from_serialized(data, i)?;
+        let merkle_root = *BlockHash::from_serialized(data, i)?;
+        let back_hash = *BlockHash::from_serialized(data, i)?;
+        let magic = *Magic::from_serialized(data, i)?;
 
         Ok(Box::new(Block::new(version, merkle_root, back_hash, magic)))
     }
@@ -72,7 +66,6 @@ impl Serialize for Block {
                 bytes_left
             ));
         }
-        let start_i = *i;
         self.version.serialize_into(data, i)?;
         self.merkle_root.serialize_into(data, i)?;
         self.back_hash.serialize_into(data, i)?;

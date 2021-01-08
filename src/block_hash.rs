@@ -25,7 +25,7 @@ impl BlockHash {
     }
 
     pub fn hash(&self) -> [u8; BLOCK_HASH_SIZE] {
-        self.value.clone()
+        self.value
     }
 }
 
@@ -61,9 +61,10 @@ impl Serialize for BlockHash {
         Ok(Box::new(BlockHash { value: hash }))
     }
 
-    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) {
+    fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<(), String> {
         buffer[*i..*i + 32].copy_from_slice(&self.value);
         *i += BlockHash::serialized_len();
+        Ok(())
     }
 }
 

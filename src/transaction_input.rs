@@ -1,7 +1,6 @@
 use crate::{
     serialize::{DynamicSized, Serialize},
     transaction::Transaction,
-    transaction_output::TransactionOutput,
     transaction_varuint::TransactionVarUint,
 };
 use secp256k1::Signature;
@@ -81,12 +80,13 @@ impl Serialize for TransactionInput {
                 bytes_left
             ));
         }
-        let pre_i = *i;
         data[*i..*i + HASH_SIZE].copy_from_slice(&self.tx);
         *i += HASH_SIZE;
         self.index.serialize_into(data, i)?;
-        let signature = self.signature.unwrap_or_default();
-        let compact_signature = signature.serialize_compact();
+        let compact_signature = match self.signature {
+            Some(s) => s.serialize_compact(),
+            None => [0u8; SECP256K1_SIG_LEN],
+        };
         data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
         *i += compact_signature.len();
         Ok(())

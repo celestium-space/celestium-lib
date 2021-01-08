@@ -47,13 +47,13 @@ impl MerkleForest<Transaction> {
     }
 
     pub fn new_complete_from_serialized_leafs(serialized_leafs: Vec<u8>) -> Result<Self, String> {
-        let i = 0;
-        let leafs = Vec::new();
+        let mut i = 0;
+        let mut leafs = Vec::new();
         while i < serialized_leafs.len() {
             leafs.push(*Transaction::from_serialized(&serialized_leafs, &mut i)?);
         }
 
-        let branches = HashMap::new();
+        let mut branches = HashMap::new();
         let mut branch_queue = leafs
             .iter()
             .map(|x| x.hash())
@@ -63,11 +63,11 @@ impl MerkleForest<Transaction> {
             for leaf_pair in branch_queue.chunks(2) {
                 if leaf_pair.len() == 2 {
                     let node = Node::new(leaf_pair[0], leaf_pair[1]);
-                    match branches.insert(node.hash(), node) {
-                        Some(_) => return Err(String::from("Could not insert node")),
-                        _ => {}
+                    let node_hash = node.hash();
+                    if branches.insert(node.hash(), node).is_some() {
+                        return Err(String::from("Could not insert node"));
                     };
-                    tmp_branch_queue.push(node.hash());
+                    tmp_branch_queue.push(node_hash);
                 } else {
                     tmp_branch_queue.push(leaf_pair[0]);
                 }
@@ -78,7 +78,7 @@ impl MerkleForest<Transaction> {
         Ok(MerkleForest {
             leafs: leafs
                 .iter()
-                .map(|x| (x.hash(), *x))
+                .map(|x| (x.hash(), x.clone()))
                 .collect::<HashMap<[u8; HASH_SIZE], Transaction>>(),
             branches,
         })
@@ -134,7 +134,7 @@ impl MerkleForest<Transaction> {
         let mut serialized = vec![0; transaction_len];
         let mut i = 0;
         for (_, transaction) in self.leafs.iter() {
-            transaction.serialize_into(&mut serialized, &mut i);
+            transaction.serialize_into(&mut serialized, &mut i)?;
         }
         Ok(serialized)
     }
@@ -237,7 +237,10 @@ impl MerkleForest<Transaction> {
         }
     }
 
-    pub fn add_merkle_tree(&self, merkle_tree: MerkleForest<Transaction>) -> Result<(), String> {
+    pub fn add_merkle_tree(
+        &mut self,
+        merkle_tree: MerkleForest<Transaction>,
+    ) -> Result<(), String> {
         self.leafs.extend(merkle_tree.leafs);
         self.branches.extend(merkle_tree.branches);
         Ok(())
