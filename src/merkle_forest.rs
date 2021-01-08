@@ -218,6 +218,31 @@ impl MerkleForest<Transaction> {
         }
     }
 
+    pub fn get_merkle_tree(&self, root: [u8; 32]) -> Result<(Vec<Node>, Vec<Transaction>), String> {
+        match self.branches.get(&root) {
+            Some(node) => {
+                let (n1, t1) = self.get_merkle_tree(node.right)?;
+                let (n2, t2) = self.get_merkle_tree(node.left)?;
+                Ok(([[node.clone()].to_vec(), n1, n2].concat(), [t1, t2].concat()))
+            },
+            None => match self.leafs.get(&root) {
+                Some(b) => Ok((Vec::new(), vec![b.clone(); 1])),
+                None => Err(String::from("Uncomplete tree")) 
+            }
+        }
+    }
+
+    pub fn get_merkle_forest(&mut self, roots: Vec<[u8; 32]>) -> Result<(Vec<Node>, Vec<Transaction>), String> {
+        let mut nodes = Vec::new();
+        let mut transactions = Vec::new();
+        for root in roots{
+            let (mut root_nodes, mut root_transactions) = self.get_merkle_tree(root)?;
+            nodes.append(&mut root_nodes);
+            transactions.append(&mut root_transactions);
+        }
+        Ok((nodes, transactions))
+    }
+
     // fn un_rooted_leafs(&self, known_roots) -> Vec<TransactionBlock> {
 
     // }

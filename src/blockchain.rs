@@ -1,10 +1,11 @@
 use crate::{
-    block::{Block, BlockTime},
+    block::Block,
     block_hash::BlockHash,
     block_version::BlockVersion,
     magic::Magic,
     serialize::{DynamicSized, Serialize, StaticSized},
     user::User,
+    merkle_forest::HASH_SIZE,
 };
 use secp256k1::PublicKey;
 use sha2::{Digest, Sha256};
@@ -52,17 +53,6 @@ impl Blockchain {
         }
         Ok(tmp_blocks)
     }
-    pub fn get_block_time(&self, hash: [u8; 32]) -> Result<BlockTime, String> {
-        for block in self.blocks.iter() {
-            if block.hash() == hash {
-                return Ok(block.time.clone());
-            }
-        }
-        Err(format!(
-            "Block with hash {:?} not found in blockchain",
-            hash
-        ))
-    }
 
     pub fn len(&self) -> usize {
         self.blocks.len()
@@ -75,7 +65,6 @@ impl Blockchain {
     pub fn create_unmined_block(
         &self,
         merkle_root: BlockHash,
-        secs_since_epoc: u32,
     ) -> Result<Vec<u8>, String> {
         let back_hash;
         if !self.blocks.is_empty() {
@@ -97,7 +86,6 @@ impl Blockchain {
             BlockVersion::default(),
             merkle_root,
             back_hash,
-            BlockTime::new(secs_since_epoc),
             Magic::new(0),
         );
         let mut unmined_serialized_block = vec![0u8; Block::serialized_len()];
@@ -121,12 +109,11 @@ impl Blockchain {
         &mut self,
         block: Vec<u8>,
         users: &mut HashMap<PublicKey, User>,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<[u8; HASH_SIZE], String> {
         let block = *Block::from_serialized(&block, &mut 0, users)?;
+        let merkle_root = block.merkle_root.hash();
         self.blocks.push(block);
-        let mut buffer = vec![0u8; self.serialized_len()];
-        self.serialize_into(&mut buffer, &mut 0)?;
-        Ok(buffer)
+        Ok(merkle_root)
     }
 
     pub fn serialize_n_blocks(

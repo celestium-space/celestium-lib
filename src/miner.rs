@@ -1,5 +1,5 @@
 use crate::{
-    block::{Block, BlockTime},
+    block::Block,
     block_hash::BlockHash,
     block_version::BlockVersion,
     magic::Magic,
@@ -24,23 +24,27 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub fn new(serialized_block: Vec<u8>, transactions: Vec<Transaction>) -> Self {
-        Miner::new_ranged(serialized_block, 0u64..u64::MAX, transactions)
-    }
+    // pub fn new(serialized_block: Vec<u8>, transactions: Vec<Transaction>) -> Self {
+    //     Miner::new_ranged(serialized_block, 0u64..u64::MAX, transactions)
+    // }
 
     pub fn new_from_hashes(
         merkle_root: BlockHash,
         back_hash: BlockHash,
         transactions: Vec<Transaction>,
-        secs_since_epoc: u32,
+        start: u64,
+        end: u64,
     ) -> Result<Self, String> {
         let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0, &mut HashMap::new())?;
-        let time = BlockTime::new(secs_since_epoc);
         let magic = Magic::new(0);
-        let block = Block::new(version, merkle_root, back_hash, time, magic);
+        let block = Block::new(version, merkle_root, back_hash, magic);
         let mut block_serialized = vec![0u8; Block::serialized_len()];
         block.serialize_into(&mut block_serialized, &mut 0)?;
-        Ok(Miner::new(block_serialized, transactions))
+        Ok(Miner::new_ranged(
+            block_serialized,
+            start..end,
+            transactions,
+        ))
     }
 
     // pub fn new_from_mf_leafs(
