@@ -4,6 +4,7 @@ use crate::{
     block::Block,
     block_hash::BlockHash,
     blockchain::Blockchain,
+    ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
     merkle_forest::{MerkleForest, HASH_SIZE},
     miner::Miner,
     serialize::{DynamicSized, Serialize, StaticSized},
@@ -417,19 +418,25 @@ impl Wallet {
         Ok(())
     }
 
+    pub fn get_pk(&self) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], String> {
+        match self.pk {
+            Some(pk) => {
+                let mut serialized_pk = [0u8; PUBLIC_KEY_COMPRESSED_SIZE];
+                pk.serialize_into(&mut serialized_pk, &mut 0)?;
+                Ok(serialized_pk)
+            }
+            None => Err(String::from("Public key not inititialized")),
+        }
+    }
+
     pub fn get_serialized_blockchain(&self, n: usize) -> Result<Vec<u8>, String> {
         let mut buffer = vec![0; Block::serialized_len() * n];
         self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
         Ok(buffer)
     }
 
-    pub fn generate_test_blockchain(
-        serialized_pk: Vec<u8>,
-        serialized_sk: Vec<u8>,
-        is_miner: bool,
-    ) -> Result<Wallet, String> {
-        let pk1 = *PublicKey::from_serialized(&serialized_pk, &mut 0)?;
-        let sk1 = *SecretKey::from_serialized(&serialized_sk, &mut 0)?;
+    pub fn generate_init_blockchain(is_miner: bool) -> Result<Wallet, String> {
+        let (pk1, sk1) = Wallet::generate_ec_keys();
 
         let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
         let mut data_hash = [0u8; HASH_SIZE];
