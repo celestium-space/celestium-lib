@@ -1,6 +1,12 @@
 use crate::serialize::{DynamicSized, Serialize};
+use std::{
+    cmp::Eq,
+    convert::From,
+    fmt::{self, Display, Formatter},
+    hash::Hash,
+};
 
-#[derive(Clone)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub struct TransactionVarUint {
     value: Vec<u8>,
 }
@@ -14,8 +20,10 @@ impl TransactionVarUint {
         }
         value
     }
+}
 
-    pub fn from_usize(value: usize) -> Self {
+impl From<usize> for TransactionVarUint {
+    fn from(value: usize) -> Self {
         if value == 0 {
             return TransactionVarUint { value: vec![0u8] };
         }
@@ -32,17 +40,14 @@ impl TransactionVarUint {
     }
 }
 
-impl PartialEq for TransactionVarUint {
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
+impl Display for TransactionVarUint {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{:x?}", self.value)
     }
 }
 
 impl Serialize for TransactionVarUint {
-    fn from_serialized(
-        data: &[u8],
-        i: &mut usize,
-    ) -> Result<Box<Self>, String> {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
         let pre_i = *i;
         while data[*i] > 0x7 {
             *i += 1;

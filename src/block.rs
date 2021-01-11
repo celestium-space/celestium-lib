@@ -1,9 +1,9 @@
 use crate::{
     block_hash::BlockHash,
     block_version::BlockVersion,
-    magic::Magic,
-    merkle_forest,
-    serialize::{Serialize, StaticSized},
+    merkle_forest::HASH_SIZE,
+    serialize::{DynamicSized, Serialize, StaticSized},
+    transaction_varuint::TransactionVarUint,
 };
 use sha2::{Digest, Sha256};
 
@@ -12,7 +12,7 @@ pub struct Block {
     pub version: BlockVersion,
     pub merkle_root: BlockHash,
     pub back_hash: BlockHash,
-    pub magic: Magic,
+    pub magic: TransactionVarUint,
 }
 
 impl Block {
@@ -20,7 +20,7 @@ impl Block {
         version: BlockVersion,
         merkle_root: BlockHash,
         back_hash: BlockHash,
-        magic: Magic,
+        magic: TransactionVarUint,
     ) -> Block {
         Block {
             version,
@@ -32,7 +32,7 @@ impl Block {
 
     pub fn hash(&self) -> [u8; 32] {
         let mut hash = [0u8; 32];
-        let mut self_serialized = vec![0u8; Block::serialized_len()];
+        let mut self_serialized = vec![0u8; self.serialized_len()];
         self.serialize_into(&mut self_serialized, &mut 0).unwrap();
         hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
         hash
@@ -41,28 +41,20 @@ impl Block {
 
 impl Serialize for Block {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Block>, String> {
-        let bytes_left = data.len() - *i;
-        if bytes_left < Self::serialized_len() {
-            return Err(format!(
-                "Not enough bytes to deserialize block, found {} expected at least {}",
-                bytes_left,
-                Block::serialized_len()
-            ));
-        }
         let version = *BlockVersion::from_serialized(data, i)?;
         let merkle_root = *BlockHash::from_serialized(data, i)?;
         let back_hash = *BlockHash::from_serialized(data, i)?;
-        let magic = *Magic::from_serialized(data, i)?;
+        let magic = *TransactionVarUint::from_serialized(data, i)?;
 
         Ok(Box::new(Block::new(version, merkle_root, back_hash, magic)))
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
-        if bytes_left < Self::serialized_len() {
+        if bytes_left < self.serialized_len() {
             return Err(format!(
                 "Not enough bytes left to serialize block, expected at least {} found {}",
-                Block::serialized_len(),
+                self.serialized_len(),
                 bytes_left
             ));
         }
@@ -74,11 +66,11 @@ impl Serialize for Block {
     }
 }
 
-impl StaticSized for Block {
-    fn serialized_len() -> usize {
+impl DynamicSized for Block {
+    fn serialized_len(&self) -> usize {
         BlockVersion::serialized_len()
-            + merkle_forest::HASH_SIZE
+            + HASH_SIZE
             + BlockHash::serialized_len()
-            + Magic::serialized_len()
+            + self.magic.serialized_len()
     }
 }

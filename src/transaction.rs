@@ -99,14 +99,14 @@ impl PartialEq for Transaction {
 impl Serialize for Transaction {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
         let version = *TransactionVersion::from_serialized(&data, i)?;
-        let num_of_inputs = (*TransactionVarUint::from_serialized(&data, i)?).get_value();
+        let num_of_inputs = *TransactionVarUint::from_serialized(data, i)?;
         let mut inputs = Vec::new();
-        for _ in 0..num_of_inputs {
+        for _ in 0..num_of_inputs.get_value() {
             inputs.push(*TransactionInput::from_serialized(&data, i)?);
         }
-        let num_of_outputs = (*TransactionVarUint::from_serialized(&data, i)?).get_value();
+        let num_of_outputs = *TransactionVarUint::from_serialized(data, i)?;
         let mut outputs = Vec::new();
-        for _ in 0..num_of_outputs {
+        for _ in 0..num_of_outputs.get_value() {
             outputs.push(*TransactionOutput::from_serialized(&data, i)?);
         }
         Ok(Box::new(Transaction {
@@ -116,15 +116,17 @@ impl Serialize for Transaction {
         }))
     }
 
-    fn serialize_into(&self, mut buffer: &mut [u8], i: &mut usize) -> Result<(), String> {
-        self.version.serialize_into(&mut buffer, i)?;
-        TransactionVarUint::from_usize(self.inputs.len()).serialize_into(&mut buffer, i)?;
+    fn serialize_into(&self, mut data: &mut [u8], i: &mut usize) -> Result<(), String> {
+        self.version.serialize_into(&mut data, i)?;
+        data[*i] = self.inputs.len() as u8;
+        *i += 1;
         for input in self.inputs.iter() {
-            input.serialize_into(&mut buffer, i)?;
+            input.serialize_into(&mut data, i)?;
         }
-        TransactionVarUint::from_usize(self.outputs.len()).serialize_into(&mut buffer, i)?;
+        data[*i] = self.outputs.len() as u8;
+        *i += 1;
         for output in self.outputs.iter() {
-            output.serialize_into(&mut buffer, i)?;
+            output.serialize_into(&mut data, i)?;
         }
         Ok(())
     }
@@ -133,8 +135,8 @@ impl Serialize for Transaction {
 impl DynamicSized for Transaction {
     fn serialized_len(&self) -> usize {
         self.version.serialized_len()
-            + TransactionVarUint::from_usize(self.inputs.len()).serialized_len()
-            + TransactionVarUint::from_usize(self.outputs.len()).serialized_len()
+            + TransactionVarUint::from(self.inputs.len()).serialized_len()
+            + TransactionVarUint::from(self.outputs.len()).serialized_len()
             + self
                 .inputs
                 .iter()

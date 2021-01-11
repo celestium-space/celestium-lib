@@ -2,9 +2,9 @@ use crate::{
     block::Block,
     block_hash::BlockHash,
     block_version::BlockVersion,
-    magic::Magic,
     merkle_forest::HASH_SIZE,
-    serialize::{DynamicSized, Serialize, StaticSized},
+    serialize::{DynamicSized, Serialize},
+    transaction_varuint::TransactionVarUint,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ impl Blockchain {
         while *i < data.len() {
             let block = *Block::from_serialized(&data, &mut i)?;
             if block.back_hash == hash {
-                let block_len = Block::serialized_len();
+                let block_len = block.serialized_len();
                 hash = *BlockHash::from_serialized(
                     Sha256::digest(&data[*i - block_len..*i]).as_slice(),
                     &mut 0,
@@ -68,25 +68,31 @@ impl Blockchain {
 
     pub fn create_unmined_block(&self, merkle_root: BlockHash) -> Result<Vec<u8>, String> {
         let back_hash;
-        if !self.blocks.is_empty() || self.head.is_some() {
-            let mut last_block_serialized = vec![0; Block::serialized_len()];
-            let mut i = 0;
-            self.blocks
-                .get(&self.head.unwrap())
-                .unwrap()
-                .serialize_into(&mut last_block_serialized, &mut i)?;
-            back_hash =
-                *BlockHash::from_serialized(&Sha256::digest(&last_block_serialized[..i]), &mut 0)?;
-        } else {
-            back_hash = BlockHash::default();
+        match self.head {
+            Some(head) => match self.blocks.get(&head) {
+                Some(last_block) => {
+                    let mut last_block_serialized = vec![0; last_block.serialized_len()];
+                    let mut i = 0;
+                    self.blocks
+                        .get(&self.head.unwrap())
+                        .unwrap()
+                        .serialize_into(&mut last_block_serialized, &mut i)?;
+                    back_hash = *BlockHash::from_serialized(
+                        &Sha256::digest(&last_block_serialized[..i]),
+                        &mut 0,
+                    )?;
+                }
+                None => back_hash = BlockHash::default(),
+            },
+            None => back_hash = BlockHash::default(),
         }
         let unmined_block = Block::new(
             BlockVersion::default(),
             merkle_root,
             back_hash,
-            Magic::new(0),
+            TransactionVarUint::from(0),
         );
-        let mut unmined_serialized_block = vec![0u8; Block::serialized_len()];
+        let mut unmined_serialized_block = vec![0u8; unmined_block.serialized_len()];
         unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0)?;
         Ok(unmined_serialized_block)
     }
@@ -128,7 +134,7 @@ impl Blockchain {
         data: &mut [u8],
         mut i: &mut usize,
         n: usize,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<[u8; HASH_SIZE]>, String> {
         if n > self.blocks.len() {
             return Err(format!(
                 "Trying to serialize more blocks than blockchain len, expected max {} got {}",
@@ -136,12 +142,14 @@ impl Blockchain {
                 n
             ));
         }
+        let mut roots = Vec::new();
         match self.head {
             Some(head) => {
                 let mut hash = head;
                 for j in 0..n {
                     match self.blocks.get(&hash) {
                         Some(block) => {
+                            roots.push(hash);
                             block.serialize_into(data, &mut i)?;
                             hash = block.back_hash.hash();
                         }
@@ -156,7 +164,7 @@ impl Blockchain {
             }
             None => return Err(String::from("Cannot serialize empty blockchain")),
         };
-        Ok(())
+        Ok(roots)
     }
 }
 
@@ -167,12 +175,17 @@ impl Serialize for Blockchain {
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
-        self.serialize_n_blocks(data, i, self.blocks.len())
+        self.serialize_n_blocks(data, i, self.blocks.len())?;
+        Ok(())
     }
 }
 
 impl DynamicSized for Blockchain {
     fn serialized_len(&self) -> usize {
-        self.blocks.len() * Block::serialized_len()
+        let mut len = 0;
+        for (_, block) in self.blocks.iter() {
+            len += block.serialized_len();
+        }
+        len
     }
 }

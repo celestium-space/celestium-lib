@@ -1,6 +1,5 @@
 use crate::{
     serialize::{DynamicSized, Serialize},
-    transaction::Transaction,
     transaction_varuint::TransactionVarUint,
 };
 use secp256k1::Signature;
@@ -17,9 +16,9 @@ pub struct TransactionInput {
 }
 
 impl TransactionInput {
-    pub fn from_transaction(transaction: Transaction, index: TransactionVarUint) -> Self {
+    pub fn new(hash: [u8; HASH_SIZE], index: TransactionVarUint) -> Self {
         TransactionInput {
-            tx: transaction.hash(),
+            tx: hash,
             index,
             signature: None,
         }

@@ -3,8 +3,9 @@ use crate::{
     block_hash::BlockHash,
     block_version::BlockVersion,
     magic::Magic,
-    serialize::{Serialize, StaticSized},
+    serialize::{DynamicSized, Serialize, StaticSized},
     transaction::Transaction,
+    transaction_varuint::TransactionVarUint,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -35,9 +36,9 @@ impl Miner {
         end: u64,
     ) -> Result<Self, String> {
         let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0)?;
-        let magic = Magic::new(0);
+        let magic = TransactionVarUint::from(0);
         let block = Block::new(version, merkle_root, back_hash, magic);
-        let mut block_serialized = vec![0u8; Block::serialized_len()];
+        let mut block_serialized = vec![0u8; block.serialized_len()];
         block.serialize_into(&mut block_serialized, &mut 0)?;
         Ok(Miner::new_ranged(
             block_serialized,

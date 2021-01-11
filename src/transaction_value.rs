@@ -31,7 +31,7 @@ impl TransactionValue {
             }
         }
         let tv = TransactionValue {
-            version: TransactionVarUint::from_usize(0),
+            version: TransactionVarUint::from(0),
             value: self_value,
         };
         if tv.is_coin_transfer() {
@@ -49,7 +49,7 @@ impl TransactionValue {
         let mut value = [0; TRANSACTION_ID_LEN];
         value.copy_from_slice(&hash);
         let tv = TransactionValue {
-            version: TransactionVarUint::from_usize(1),
+            version: TransactionVarUint::from(1),
             value,
         };
         if tv.is_id_transfer() {
