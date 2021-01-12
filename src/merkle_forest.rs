@@ -35,7 +35,7 @@ impl Node {
 #[derive(Clone)]
 pub struct MerkleForest<T> {
     leafs: HashMap<[u8; HASH_SIZE], T>,
-    branches: HashMap<[u8; HASH_SIZE], Node>,
+    pub branches: HashMap<[u8; HASH_SIZE], Node>,
 }
 
 impl MerkleForest<Transaction> {
@@ -46,24 +46,23 @@ impl MerkleForest<Transaction> {
         }
     }
 
-    pub fn new_complete_from_serialized_leafs(serialized_leafs: Vec<u8>) -> Result<Self, String> {
-        let mut i = 0;
-        let mut leafs = Vec::new();
-        while i < serialized_leafs.len() {
-            leafs.push(*Transaction::from_serialized(&serialized_leafs, &mut i)?);
+    pub fn new_complete_from_leafs(leafs: Vec<Transaction>) -> Result<(Self, [u8; 32]), String> {
+        if leafs.len() > 256 {
+            return Err("Blockchain can only contain 256 leafs".to_string());
         }
-
         let mut branches = HashMap::new();
         let mut branch_queue = leafs
             .iter()
             .map(|x| x.hash())
             .collect::<Vec<[u8; HASH_SIZE]>>();
+        let mut root = None;
         while branch_queue.len() > 1 {
             let mut tmp_branch_queue = Vec::new();
             for leaf_pair in branch_queue.chunks(2) {
                 if leaf_pair.len() == 2 {
                     let node = Node::new(leaf_pair[0], leaf_pair[1]);
                     let node_hash = node.hash();
+                    root = Some(node.clone());
                     if branches.insert(node.hash(), node).is_some() {
                         return Err(String::from("Could not insert node"));
                     };
@@ -74,25 +73,63 @@ impl MerkleForest<Transaction> {
             }
             branch_queue = tmp_branch_queue;
         }
+        match root {
+            Some(r) => Ok((
+                MerkleForest {
+                    leafs: leafs
+                        .iter()
+                        .map(|x| (x.hash(), x.clone()))
+                        .collect::<HashMap<[u8; HASH_SIZE], Transaction>>(),
+                    branches,
+                },
+                r.hash(),
+            )),
+            None => Err(String::from("Could not create root")),
+        }
+    }
 
-        Ok(MerkleForest {
-            leafs: leafs
-                .iter()
-                .map(|x| (x.hash(), x.clone()))
-                .collect::<HashMap<[u8; HASH_SIZE], Transaction>>(),
-            branches,
-        })
+    pub fn new_complete_from_serialized_leafs(
+        serialized_leafs: Vec<u8>,
+    ) -> Result<(Self, [u8; HASH_SIZE]), String> {
+        let mut i = 0;
+        let mut leafs = Vec::new();
+        while i < serialized_leafs.len() {
+            leafs.push(*Transaction::from_serialized(&serialized_leafs, &mut i)?);
+        }
+
+        MerkleForest::new_complete_from_leafs(leafs)
     }
 
     pub fn leaf_len(&self) -> usize {
         self.leafs.len()
     }
 
-    pub fn add_transactions(&mut self, data: Vec<Transaction>) -> Result<bool, String> {
+    pub fn add_transactions(&mut self, data: Vec<Transaction>) -> Result<(), String> {
         for transaction in data {
-            self.leafs.insert(transaction.hash(), transaction);
+            if let Some(l) = self.leafs.insert(transaction.hash(), transaction) {
+                let leaf_hash = l.hash();
+                self.leafs.insert(leaf_hash, l);
+                return Err(format!(
+                    "Transaction with hash {:?} already exists in merkle forest",
+                    leaf_hash
+                ));
+            }
         }
-        Ok(true)
+        Ok(())
+    }
+
+    pub fn add_branches(&mut self, branches: Vec<Node>) -> Result<(), String> {
+        for node in branches {
+            if let Some(b) = self.branches.insert(node.hash(), node) {
+                let branch_hash = b.hash();
+                self.branches.insert(branch_hash, b);
+                return Err(format!(
+                    "Branch with hash {:?} already exists in merkle forest",
+                    branch_hash
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn add_serialized_transactions(
@@ -146,29 +183,6 @@ impl MerkleForest<Transaction> {
             serialized[i..HASH_SIZE].copy_from_slice(&node.1.serialize());
         }
         Ok(serialized)
-    }
-
-    pub fn create_tree_from_leafs(&mut self) -> Result<[u8; 32], String> {
-        if !self.branches.is_empty() {
-            return Err(String::from("Tree already has branches"));
-        }
-        let mut branch_queue = self.leafs.keys().cloned().collect::<Vec<[u8; 32]>>();
-
-        while branch_queue.len() > 1 {
-            let mut tmp_branch_queue = Vec::new();
-            for leaf_pair in branch_queue.chunks(2) {
-                let node;
-                if leaf_pair.len() == 2 {
-                    node = Node::new(leaf_pair[0], leaf_pair[1]);
-                    tmp_branch_queue.push(node.hash());
-                    self.add_node(node)?;
-                } else {
-                    tmp_branch_queue.push(leaf_pair[0]);
-                }
-            }
-            branch_queue = tmp_branch_queue;
-        }
-        Ok(branch_queue[0])
     }
 
     pub fn get_transactions(
@@ -257,8 +271,12 @@ impl MerkleForest<Transaction> {
                 ))
             }
             None => match self.leafs.get(&root) {
-                Some(b) => Ok((Vec::new(), vec![b.clone(); 1])),
-                None => Err(String::from("Uncomplete tree")),
+                Some(leaf) => Ok((Vec::new(), vec![leaf.clone()])),
+                None => Err(format!(
+                    "Root not found in merkle tree {:?}; {:?}",
+                    self.branches.values().next().unwrap().hash(),
+                    root
+                )),
             },
         }
     }

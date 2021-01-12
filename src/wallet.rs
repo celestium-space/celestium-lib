@@ -1,10 +1,9 @@
-use crate::block_version::BlockVersion;
 use crate::{
     block::Block,
     block_hash::BlockHash,
     blockchain::Blockchain,
     ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
-    merkle_forest::{MerkleForest, HASH_SIZE},
+    merkle_forest::{MerkleForest, Node, HASH_SIZE},
     miner::Miner,
     serialize::{DynamicSized, Serialize, StaticSized},
     transaction::Transaction,
@@ -321,13 +320,17 @@ impl Wallet {
                         ),
                     ],
                 ));
-                let mut merkle_forest = MerkleForest::new_empty();
-                merkle_forest.add_transactions(transactions.clone())?;
-                let merkle_root =
-                    *BlockHash::from_serialized(&merkle_forest.create_tree_from_leafs()?, &mut 0)?;
+                let (_, merkle_root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
+                //return Err(format!("Root: {:?}", merkle_root));
                 let back_hash =
-                    *BlockHash::from_serialized(&self.blockchain.get_head_hash()?, &mut 0)?;
-                Miner::new_from_hashes(merkle_root, back_hash, transactions, start, end)
+                    *BlockHash::from_serialized(&self.blockchain.get_head_hash(), &mut 0)?;
+                Miner::new_from_hashes(
+                    BlockHash::from(merkle_root),
+                    back_hash,
+                    transactions,
+                    start,
+                    end,
+                )
             }
             None => Err(String::from("Need public key to mine")),
         }
@@ -337,7 +340,18 @@ impl Wallet {
         &mut self,
         transactions: Vec<Transaction>,
         block_hash: [u8; HASH_SIZE],
-    ) -> Result<bool, String> {
+        merkle_root_hash: [u8; HASH_SIZE],
+    ) -> Result<(), String> {
+        let new_branches = if self.is_miner {
+            let (mf, root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
+            if root != merkle_root_hash {
+                return Err(format!("Creating merkle tree from transactions does not result in correct root, expected {:?} got {:?}", root, block_hash));
+            }
+            mf.branches.values().cloned().collect::<Vec<Node>>()
+        } else {
+            Vec::new()
+        };
+
         let mut spent_outputs: Vec<([u8; HASH_SIZE], usize)> = Vec::new();
         for transaction in transactions.iter() {
             self.off_chain_transactions.remove(&transaction.hash());
@@ -348,6 +362,7 @@ impl Wallet {
                     && !self
                         .unspent_outputs
                         .contains_key(&(transaction_hash, index.clone()))
+                    && !self.off_chain_transactions.is_empty()
                 {
                     return Err(format!(
                         "Transaction with hash {:?}; trying to double-spend at index {}",
@@ -362,13 +377,17 @@ impl Wallet {
                 spent_outputs.push((input.tx, input.index.get_value()));
             }
         }
+        self.blockchain_merkle_forest
+            .add_transactions(transactions)?;
+        self.blockchain_merkle_forest.add_branches(new_branches)?;
 
         self.unspent_outputs.retain(|(transaction_hash, index), _| {
             !spent_outputs
                 .iter()
                 .any(|(tx, i)| transaction_hash == tx && index.get_value() == *i)
         });
-        self.blockchain_merkle_forest.add_transactions(transactions)
+
+        Ok(())
     }
 
     pub fn convert_serialized_transactions(data: &[u8]) -> Result<Vec<Transaction>, String> {
@@ -401,12 +420,11 @@ impl Wallet {
         let mut tmp_merkle_forest = Vec::new();
         let mut i = 0;
         for serialized_tree_leafs in serialized_leafs {
-            tmp_merkle_forest.push(MerkleForest::new_complete_from_serialized_leafs(
-                serialized_tree_leafs,
-            )?);
+            tmp_merkle_forest
+                .push(MerkleForest::new_complete_from_serialized_leafs(serialized_tree_leafs)?.0);
             let block = *Block::from_serialized(&serialized_blocks, &mut i)?;
+            let block_len = block.serialized_len();
             if block.back_hash == hash {
-                let block_len = block.serialized_len();
                 hash = *BlockHash::from_serialized(
                     Sha256::digest(&serialized_blocks[i - block_len..i]).as_slice(),
                     &mut 0,
@@ -421,8 +439,11 @@ impl Wallet {
                 tmp_blocks.push(block);
             } else {
                 return Err(format!(
-                    "Block at addr {} in chain has wrong back hash. Expected {} got {}",
-                    i, hash, block.back_hash
+                    "Block with len {} at byte {} in chain has wrong back hash. Expected {} got {}",
+                    block_len,
+                    i - block_len,
+                    hash,
+                    block.back_hash
                 ));
             }
         }
@@ -448,11 +469,13 @@ impl Wallet {
 
     pub fn get_serialized_blockchain(&self, n: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>), String> {
         if self.is_miner {
+            return Err(format!("b0: {:?}", self.blockchain.blocks[].magic.value));
             let mut buffer = vec![0; self.blockchain.serialized_len()];
-            let roots = self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
+            let merkle_roots = self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
             let mut serialized_tree_leafs = Vec::new();
-            for root in roots {
-                let (_, transactions) = self.blockchain_merkle_forest.get_merkle_tree(root)?;
+            for merkle_root in merkle_roots {
+                let (_, transactions) =
+                    self.blockchain_merkle_forest.get_merkle_tree(merkle_root)?;
                 let mut serialized_transactions = Vec::new();
                 for transaction in transactions {
                     let mut serialized_transaction = vec![0; transaction.serialized_len()];
@@ -467,7 +490,7 @@ impl Wallet {
         }
     }
 
-    pub fn generate_init_blockchain(is_miner: bool) -> Result<(Wallet, Transaction), String> {
+    pub fn generate_init_blockchain(is_miner: bool) -> Result<Wallet, String> {
         let (pk1, sk1) = Wallet::generate_ec_keys();
 
         let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
@@ -482,31 +505,36 @@ impl Wallet {
             ],
         );
 
-        let b0 = Block::new(
-            BlockVersion::default(),
-            *BlockHash::from_serialized(&t0.hash(), &mut 0)?,
-            BlockHash::default(),
-            TransactionVarUint::from(0),
-        );
+        let mut wallet = if is_miner {
+            Wallet::default_miner(pk1, sk1)
+        } else {
+            Wallet::default(pk1, sk1)
+        };
 
-        let mut b0_serialized = vec![0u8; b0.serialized_len()];
-        b0.serialize_into(&mut b0_serialized, &mut 0)?;
-        let mut miner = Miner::new_ranged(b0_serialized, 0..u64::MAX, [t0.clone()].to_vec());
-        let mut wallet;
+        wallet.add_off_chain_transaction(t0)?;
+
+        let mut miner = wallet.miner_from_off_chain_transactions(0, u64::MAX)?;
+        //return Err(format!("tlen: {}", miner.transactions.len()));
+
         match Wallet::mine_until_complete(&mut miner) {
             Some(b) => {
                 let block_hash = b.hash();
-                if !is_miner {
-                    wallet = Wallet::default(pk1, sk1);
-                } else {
-                    wallet = Wallet::default_miner(pk1, sk1);
-                }
+                let merkle_root_hash = b.merkle_root.hash();
                 wallet.add_block(b)?;
-                wallet.add_on_chain_transactions(miner.transactions, block_hash)?;
+                wallet.add_on_chain_transactions(
+                    miner.transactions,
+                    block_hash,
+                    merkle_root_hash,
+                )?;
+                // return Err(format!(
+                //     "root: {} | branches[0]: {}",
+                //     merkle_root_hash,
+                //     branches.values().iter()[0]
+                // ));
             }
             None => return Err(String::from("Could not mine first block")),
         };
-        Ok((wallet, t0))
+        Ok(wallet)
     }
 
     pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 pub struct Blockchain {
-    blocks: HashMap<[u8; HASH_SIZE], Block>,
+    pub blocks: HashMap<[u8; HASH_SIZE], Block>,
     head: Option<[u8; HASH_SIZE]>,
 }
 
@@ -97,10 +97,10 @@ impl Blockchain {
         Ok(unmined_serialized_block)
     }
 
-    pub fn get_head_hash(&self) -> Result<[u8; 32], String> {
+    pub fn get_head_hash(&self) -> [u8; 32] {
         match self.head {
-            Some(h) => Ok(h),
-            None => Err(String::from("Cannot get head from empty blockchain")),
+            Some(h) => h,
+            None => [0u8; 32],
         }
     }
 
@@ -142,14 +142,20 @@ impl Blockchain {
                 n
             ));
         }
-        let mut roots = Vec::new();
+        let mut merkle_roots = Vec::new();
         match self.head {
             Some(head) => {
                 let mut hash = head;
                 for j in 0..n {
                     match self.blocks.get(&hash) {
                         Some(block) => {
-                            roots.push(hash);
+                            merkle_roots.push(block.merkle_root.hash());
+                            return Err(format!(
+                                "Block len: {} | {:x?} | {:x?}",
+                                block.serialized_len(),
+                                block.magic.value,
+                                block.back_hash.hash(),
+                            ));
                             block.serialize_into(data, &mut i)?;
                             hash = block.back_hash.hash();
                         }
@@ -164,7 +170,7 @@ impl Blockchain {
             }
             None => return Err(String::from("Cannot serialize empty blockchain")),
         };
-        Ok(roots)
+        Ok(merkle_roots)
     }
 }
 

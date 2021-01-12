@@ -14,8 +14,8 @@ impl BlockHash {
     }
 
     pub fn contains_enough_work(&self) -> bool {
-        if self.value[0] == 0 {
-            //&& self.value[1] == 0 && self.value[2] == 0 && self.value[3] < 0x0f {
+        if self.value[0] == 0 && self.value[1] == 0 && self.value[2] == 0 {
+            // && self.value[3] < 0x0f {
             return true;
         }
         false
@@ -27,6 +27,12 @@ impl BlockHash {
 
     pub fn hash(&self) -> [u8; BLOCK_HASH_SIZE] {
         self.value
+    }
+}
+
+impl From<[u8; BLOCK_HASH_SIZE]> for BlockHash {
+    fn from(value: [u8; BLOCK_HASH_SIZE]) -> Self {
+        BlockHash { value }
     }
 }
 

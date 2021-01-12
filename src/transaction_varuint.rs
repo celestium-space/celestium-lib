@@ -8,7 +8,7 @@ use std::{
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct TransactionVarUint {
-    value: Vec<u8>,
+    pub value: Vec<u8>,
 }
 
 impl TransactionVarUint {
@@ -19,6 +19,30 @@ impl TransactionVarUint {
             value += (byte & 0x7f) as usize;
         }
         value
+    }
+
+    pub fn increase(&mut self) {
+        let last_index = self.value.len() - 1;
+        if self.value[last_index] < 0x7f {
+            self.value[last_index] += 1;
+        } else {
+            self.value[last_index] = u8::MAX;
+            self.increase_rec(last_index);
+            self.value[last_index] = 0;
+        }
+    }
+
+    fn increase_rec(&mut self, i: usize) {
+        if self.value[i] == u8::MAX {
+            self.value[i] = 0x80;
+            if i == 0 {
+                self.value.insert(0, 0x81);
+            } else {
+                self.increase_rec(i - 1);
+            }
+        } else {
+            self.value[i] += 1;
+        }
     }
 }
 
@@ -42,14 +66,14 @@ impl From<usize> for TransactionVarUint {
 
 impl Display for TransactionVarUint {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:x?}", self.value)
+        write!(f, "{:x}", self.get_value())
     }
 }
 
 impl Serialize for TransactionVarUint {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
         let pre_i = *i;
-        while data[*i] > 0x7 {
+        while data[*i] > 0x7f {
             *i += 1;
         }
         *i += 1;
