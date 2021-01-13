@@ -13,12 +13,8 @@ impl BlockHash {
         BlockHash { value: [0xff; 32] }
     }
 
-    pub fn contains_enough_work(&self) -> bool {
-        if self.value[0] == 0 && self.value[1] == 0 && self.value[2] == 0 {
-            // && self.value[3] < 0x0f {
-            return true;
-        }
-        false
+    pub fn contains_enough_work(hash: &[u8]) -> bool {
+        hash[0] == 0 //&& hash[1] == 0 && hash[2] == 0 && hash[3] < 0x0f
     }
 
     pub fn is_zero_block(&self) -> bool {

@@ -30,11 +30,11 @@ impl Miner {
         start: u64,
         end: u64,
     ) -> Result<Self, String> {
-        let version = *BlockVersion::from_serialized(&[0, 0, 0, 0], &mut 0)?;
+        let version = BlockVersion::default();
         let magic = TransactionVarUint::from(0);
-        let block = Block::new(version, merkle_root, back_hash, magic.clone());
-        let mut block_serialized = vec![0u8; block.serialized_len() + 7];
-        block.serialize_into(&mut block_serialized[0..block.serialized_len()], &mut 0)?;
+        let block = Block::new(version, merkle_root, back_hash, magic);
+        let mut block_serialized = vec![0u8; block.serialized_len()];
+        block.serialize_into(&mut block_serialized, &mut 0)?;
         Ok(Miner::new_ranged(
             block_serialized,
             start..end,
@@ -48,7 +48,7 @@ impl Miner {
         transactions: Vec<Transaction>,
     ) -> Self {
         let block_len = serialized_block.len();
-        let mut my_serialized_block = vec![0u8; block_len];
+        let mut my_serialized_block = vec![0u8; block_len + 7];
         my_serialized_block[0..block_len].copy_from_slice(&serialized_block);
         let magic = TransactionVarUint::from(range.start as usize);
         Miner {
@@ -61,16 +61,11 @@ impl Miner {
     }
 
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
-        let magic_start = self.my_serialized_block.len() - 9;
+        let magic_start = self.my_serialized_block.len() - 8;
         let magic_end = magic_start + self.current_magic.serialized_len();
         self.my_serialized_block[magic_start..magic_end].copy_from_slice(&self.current_magic.value);
-        let hash = *BlockHash::from_serialized(
-            Sha256::digest(&self.my_serialized_block[0..magic_end]).as_slice(),
-            &mut 0,
-        )
-        .unwrap();
-        if hash.contains_enough_work() {
-            println!("TEST!");
+        let hash = Sha256::digest(&self.my_serialized_block[0..magic_end]).to_vec();
+        if BlockHash::contains_enough_work(&hash) {
             let block =
                 *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
             Poll::Ready(Some(block))

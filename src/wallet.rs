@@ -198,6 +198,15 @@ impl Wallet {
                         dust_gathered += transaction_output.value.get_value().unwrap();
                     }
                 }
+                for transaction in self.off_chain_transactions.values() {
+                    for transaction_output in transaction.outputs.iter() {
+                        if transaction_output.pk == pk
+                            && transaction_output.value.is_coin_transfer()
+                        {
+                            dust_gathered += transaction_output.value.get_value().unwrap();
+                        }
+                    }
+                }
                 Ok(dust_gathered)
             }
             None => Err(String::from("Cannot get balance without public key")),
@@ -415,31 +424,32 @@ impl Wallet {
         serialized_blocks: Vec<u8>,
         serialized_leafs: Vec<Vec<u8>>,
     ) -> Result<(), String> {
-        let mut hash = BlockHash::default();
+        let mut hash: Vec<u8> = BlockHash::default().hash().to_vec();
         let mut tmp_blocks = Vec::new();
-        let mut tmp_merkle_forest = Vec::new();
         let mut i = 0;
         for serialized_tree_leafs in serialized_leafs {
-            tmp_merkle_forest
-                .push(MerkleForest::new_complete_from_serialized_leafs(serialized_tree_leafs)?.0);
+            let mut leafs = Vec::new();
+            let mut j = 0;
+            while j < serialized_tree_leafs.len() {
+                leafs.push(*Transaction::from_serialized(
+                    &serialized_tree_leafs,
+                    &mut j,
+                )?);
+            }
             let block = *Block::from_serialized(&serialized_blocks, &mut i)?;
             let block_len = block.serialized_len();
-            if block.back_hash == hash {
-                hash = *BlockHash::from_serialized(
-                    Sha256::digest(&serialized_blocks[i - block_len..i]).as_slice(),
-                    &mut 0,
-                )?;
-                let valid_hash = hash.contains_enough_work();
-                if !valid_hash {
+            if block.back_hash.hash().to_vec() == hash {
+                hash = Sha256::digest(&serialized_blocks[i - block_len..i]).to_vec();
+                if !BlockHash::contains_enough_work(&hash) {
                     return Err(format!(
-                        "Block with len {} at byte {} with magic {}, hashes to {}, which does not represent enough work",
+                        "Wallet - Block with len {} at byte {} with magic {}, hashes to {:x?}, which does not represent enough work",
                         block_len, i - block_len, block.magic, hash
                     ));
                 }
-                tmp_blocks.push(block);
+                tmp_blocks.push((block, leafs));
             } else {
                 return Err(format!(
-                    "Block with len {} at byte {} in chain has wrong back hash. Expected {} got {}",
+                    "Block with len {} at byte {} in chain has wrong back hash. Expected {:x?} got {}",
                     block_len,
                     i - block_len,
                     hash,
@@ -447,11 +457,10 @@ impl Wallet {
                 ));
             }
         }
-        for block in tmp_blocks {
+        for (block, transactions) in tmp_blocks {
+            self.add_on_chain_transactions(transactions, block.hash(), block.merkle_root.hash())?;
+            // DO NOT CHANGE ORDER!!! Transactions have to be verified before adding block!
             self.blockchain.add_block(block)?;
-        }
-        for merkle_tree in tmp_merkle_forest {
-            self.blockchain_merkle_forest.add_merkle_tree(merkle_tree)?;
         }
         Ok(())
     }
@@ -469,7 +478,6 @@ impl Wallet {
 
     pub fn get_serialized_blockchain(&self, n: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>), String> {
         if self.is_miner {
-            return Err(format!("b0: {:?}", self.blockchain.blocks[].magic.value));
             let mut buffer = vec![0; self.blockchain.serialized_len()];
             let merkle_roots = self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
             let mut serialized_tree_leafs = Vec::new();
@@ -514,7 +522,6 @@ impl Wallet {
         wallet.add_off_chain_transaction(t0)?;
 
         let mut miner = wallet.miner_from_off_chain_transactions(0, u64::MAX)?;
-        //return Err(format!("tlen: {}", miner.transactions.len()));
 
         match Wallet::mine_until_complete(&mut miner) {
             Some(b) => {

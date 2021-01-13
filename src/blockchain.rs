@@ -30,27 +30,23 @@ impl Blockchain {
     }
 
     fn parse_blocks(data: &[u8], mut i: &mut usize) -> Result<Vec<Block>, String> {
-        let mut hash = BlockHash::default();
+        let mut hash = BlockHash::default().hash().to_vec();
         let mut tmp_blocks = Vec::new();
         while *i < data.len() {
             let block = *Block::from_serialized(&data, &mut i)?;
-            if block.back_hash == hash {
+            if block.back_hash.hash().to_vec() == hash {
                 let block_len = block.serialized_len();
-                hash = *BlockHash::from_serialized(
-                    Sha256::digest(&data[*i - block_len..*i]).as_slice(),
-                    &mut 0,
-                )?;
-                let valid_hash = hash.contains_enough_work();
-                if !valid_hash {
+                hash = Sha256::digest(&data[*i - block_len..*i]).to_vec();
+                if BlockHash::contains_enough_work(&hash) {
                     return Err(format!(
-                        "Block with len {} at byte {} with magic {}, hashes to {}, which does not represent enough work",
+                        "Blockchain - Block with len {} at byte {} with magic {}, hashes to {:x?}, which does not represent enough work",
                         block_len, *i - block_len, block.magic, hash
                     ));
                 }
                 tmp_blocks.push(block);
             } else {
                 return Err(format!(
-                    "Block at addr {} in chain has wrong back hash. Expected {} got {}",
+                    "Block at addr {} in chain has wrong back hash. Expected {:x?} got {}",
                     i, hash, block.back_hash
                 ));
             }
@@ -146,18 +142,12 @@ impl Blockchain {
         match self.head {
             Some(head) => {
                 let mut hash = head;
+                let mut blocks = Vec::new();
                 for j in 0..n {
                     match self.blocks.get(&hash) {
-                        Some(block) => {
-                            merkle_roots.push(block.merkle_root.hash());
-                            return Err(format!(
-                                "Block len: {} | {:x?} | {:x?}",
-                                block.serialized_len(),
-                                block.magic.value,
-                                block.back_hash.hash(),
-                            ));
-                            block.serialize_into(data, &mut i)?;
-                            hash = block.back_hash.hash();
+                        Some(b) => {
+                            blocks.insert(0, b);
+                            hash = b.back_hash.hash();
                         }
                         None => {
                             return Err(format!(
@@ -166,6 +156,10 @@ impl Blockchain {
                             ))
                         }
                     }
+                }
+                for block in blocks {
+                    merkle_roots.push(block.merkle_root.hash());
+                    block.serialize_into(data, &mut i)?;
                 }
             }
             None => return Err(String::from("Cannot serialize empty blockchain")),

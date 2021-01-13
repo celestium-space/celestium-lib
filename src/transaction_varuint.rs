@@ -66,7 +66,7 @@ impl From<usize> for TransactionVarUint {
 
 impl Display for TransactionVarUint {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:x}", self.get_value())
+        write!(f, "{:x?}", self.value)
     }
 }
 
@@ -84,15 +84,14 @@ impl Serialize for TransactionVarUint {
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
         let bytes_left = data.len() - *i;
-        if bytes_left < self.serialized_len() {
+        let bytes_needed = self.serialized_len();
+        if bytes_left < bytes_needed {
             return Err(format!(
-                "Too few bytes left for serializing transaction variable uint, expected at least {} got {}",
-                self.serialized_len(),
-                bytes_left
+                "Too few bytes left for serializing transaction variable uint, expected at least {} got {}", bytes_needed, bytes_left
             ));
         }
-        data[*i..*i + self.serialized_len()].copy_from_slice(&self.value);
-        *i += self.serialized_len();
+        data[*i..*i + bytes_needed].copy_from_slice(&self.value);
+        *i += bytes_needed;
         Ok(())
     }
 }
