@@ -22,26 +22,30 @@ impl TransactionVarUint {
     }
 
     pub fn increase(&mut self) {
-        let last_index = self.value.len() - 1;
+        let mut last_index = self.value.len() - 1;
         if self.value[last_index] < 0x7f {
             self.value[last_index] += 1;
         } else {
             self.value[last_index] = u8::MAX;
-            self.increase_rec(last_index);
+            if self.increase_rec(last_index) {
+                last_index += 1;
+            }
             self.value[last_index] = 0;
         }
     }
 
-    fn increase_rec(&mut self, i: usize) {
+    fn increase_rec(&mut self, i: usize) -> bool {
         if self.value[i] == u8::MAX {
             self.value[i] = 0x80;
             if i == 0 {
                 self.value.insert(0, 0x81);
+                true
             } else {
-                self.increase_rec(i - 1);
+                self.increase_rec(i - 1)
             }
         } else {
             self.value[i] += 1;
+            false
         }
     }
 }

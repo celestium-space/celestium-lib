@@ -7,11 +7,7 @@ use crate::{
     transaction_varuint::TransactionVarUint,
 };
 use sha2::{Digest, Sha256};
-use std::{
-    future::Future,
-    ops::Range,
-    task::{Context, Poll},
-};
+use std::{ops::Range, task::Poll};
 
 #[derive(Clone)]
 pub struct Miner {
