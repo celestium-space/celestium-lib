@@ -13,11 +13,15 @@ use crate::{
     transaction_varuint::TransactionVarUint,
     transaction_version::TransactionVersion,
 };
+use rayon::prelude::*;
 use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::task::Poll;
+
+const N_PAR_WORKERS: u64 = 16;
+const PAR_WORK: u64 = 10000;
 
 pub struct BinaryWallet {
     pub blockchain_bin: Vec<u8>,
@@ -520,27 +524,36 @@ impl Wallet {
         };
 
         wallet.add_off_chain_transaction(t0)?;
+        let mut i = 0;
+        let (done_block, done_transactions): (Block, Vec<Transaction>) = loop {
+            let list: Vec<u64> = (0..N_PAR_WORKERS).collect();
+            let slice = list.as_slice();
+            let tmp_result = slice.par_iter().filter_map(|&j| {
+                let start = i + j * PAR_WORK;
+                let end = i + (j + 1) * PAR_WORK;
+                let mut miner = wallet
+                    .miner_from_off_chain_transactions(start, end)
+                    .unwrap();
+                while miner.do_work().is_pending() {}
+                match miner.do_work() {
+                    Poll::Ready(block) => match block {
+                        Some(b) => Some((b, miner.transactions)),
+                        None => None,
+                    },
+                    Poll::Pending => None,
+                }
+            });
 
-        let mut miner = wallet.miner_from_off_chain_transactions(0, u64::MAX)?;
-
-        match Wallet::mine_until_complete(&mut miner) {
-            Some(b) => {
-                let block_hash = b.hash();
-                let merkle_root_hash = b.merkle_root.hash();
-                wallet.add_block(b)?;
-                wallet.add_on_chain_transactions(
-                    miner.transactions,
-                    block_hash,
-                    merkle_root_hash,
-                )?;
-                // return Err(format!(
-                //     "root: {} | branches[0]: {}",
-                //     merkle_root_hash,
-                //     branches.values().iter()[0]
-                // ));
+            match tmp_result.find_any(|_| true) {
+                Some(r) => break r,
+                None => i += N_PAR_WORKERS + PAR_WORK,
             }
-            None => return Err(String::from("Could not mine first block")),
         };
+
+        let block_hash = done_block.hash();
+        let merkle_root_hash = done_block.merkle_root.hash();
+        wallet.add_block(done_block)?;
+        wallet.add_on_chain_transactions(done_transactions, block_hash, merkle_root_hash)?;
         Ok(wallet)
     }
 

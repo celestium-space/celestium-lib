@@ -15,4 +15,20 @@ pub mod transaction_version;
 pub mod wallet;
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    #[test]
+    fn it_works() {
+        assert!(
+            match crate::wallet::Wallet::generate_init_blockchain(true) {
+                Ok(_) => {
+                    println!("All good!");
+                    true
+                }
+                Err(e) => {
+                    println!("{}", e);
+                    false
+                }
+            },
+        )
+    }
+}
