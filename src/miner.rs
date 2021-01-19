@@ -62,21 +62,17 @@ impl Miner {
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
         let magic_end = self.magic_start + self.magic_len;
         let hash = Sha256::digest(&self.my_serialized_block[0..magic_end]).to_vec();
-        if BlockHash::contains_enough_work(&hash) {
-            let block =
-                *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
-            Poll::Ready(Some(block))
-        } else if self.i < self.end {
+        if !BlockHash::contains_enough_work(&hash) {
             self.magic_len = Magic::increase(
                 &mut self.my_serialized_block[self.magic_start..],
                 self.magic_len,
             );
             self.i += 1;
-            if self.i == 0xfe88 {
-                Poll::Ready(None)
-            } else {
-                Poll::Pending
-            }
+            Poll::Pending
+        } else if self.i < self.end {
+            let block =
+                *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
+            Poll::Ready(Some(block))
         } else {
             Poll::Ready(None)
         }
