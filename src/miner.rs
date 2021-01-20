@@ -17,8 +17,8 @@ pub struct Miner {
     i: u64,
     end: u64,
     pub transactions: Vec<Transaction>,
-    magic_start: usize,
-    magic_len: usize,
+    pub magic_start: usize,
+    pub magic_len: usize,
 }
 
 impl Miner {
@@ -30,7 +30,7 @@ impl Miner {
         end: u64,
     ) -> Result<Self, String> {
         let version = BlockVersion::default();
-        let magic = TransactionVarUint::from(0);
+        let magic = TransactionVarUint::from(start);
         let block = Block::new(version, merkle_root, back_hash, magic);
         let mut block_serialized = vec![0u8; block.serialized_len()];
         block.serialize_into(&mut block_serialized, &mut 0)?;

@@ -20,8 +20,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::task::Poll;
 
-const N_PAR_WORKERS: u64 = 16;
-const PAR_WORK: u64 = 10000;
+pub const DEFAULT_N_PAR_WORKERS: u64 = 16;
+pub const DEFAULT_PAR_WORK: u64 = 0x10000;
 
 pub struct BinaryWallet {
     pub blockchain_bin: Vec<u8>,
@@ -502,6 +502,43 @@ impl Wallet {
         }
     }
 
+    pub fn parallel_mine_off_chain_transactions(
+        &self,
+        n_par_workers: u64,
+        par_work: u64,
+    ) -> (Block, Vec<Transaction>) {
+        let mut i = 0;
+        loop {
+            let list: Vec<u64> = (0..1000).collect();
+            match list
+                .par_iter()
+                .filter_map(|&j| {
+                    let start = i + j * par_work;
+                    let end = i + (j + 1) * par_work;
+                    let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
+                    while miner.do_work().is_pending() {}
+                    match miner.do_work() {
+                        Poll::Ready(block) => match block {
+                            Some(b) => {
+                                println!("FOUND!");
+                                Some((b, miner.transactions))
+                            }
+                            None => None,
+                        },
+                        Poll::Pending => {
+                            println!("FUCK!");
+                            None
+                        }
+                    }
+                })
+                .find_any(|_| true)
+            {
+                Some(r) => break r,
+                None => i += n_par_workers * par_work,
+            }
+        }
+    }
+
     pub fn generate_init_blockchain(is_miner: bool) -> Result<Wallet, String> {
         let (pk1, sk1) = Wallet::generate_ec_keys();
 
@@ -524,32 +561,9 @@ impl Wallet {
         };
 
         wallet.add_off_chain_transaction(t0)?;
-        let mut i = 0;
-        let (done_block, done_transactions): (Block, Vec<Transaction>) = loop {
-            let list: Vec<u64> = (0..N_PAR_WORKERS).collect();
-            let slice = list.as_slice();
-            let tmp_result = slice.par_iter().filter_map(|&j| {
-                let start = i + j * PAR_WORK;
-                let end = i + (j + 1) * PAR_WORK;
-                let mut miner = wallet
-                    .miner_from_off_chain_transactions(start, end)
-                    .unwrap();
-                while miner.do_work().is_pending() {}
-                match miner.do_work() {
-                    Poll::Ready(block) => match block {
-                        Some(b) => Some((b, miner.transactions)),
-                        None => None,
-                    },
-                    Poll::Pending => None,
-                }
-            });
 
-            match tmp_result.find_any(|_| true) {
-                Some(r) => break r,
-                None => i += N_PAR_WORKERS + PAR_WORK,
-            }
-        };
-
+        let (done_block, done_transactions) =
+            wallet.parallel_mine_off_chain_transactions(DEFAULT_N_PAR_WORKERS, DEFAULT_PAR_WORK);
         let block_hash = done_block.hash();
         let merkle_root_hash = done_block.merkle_root.hash();
         wallet.add_block(done_block)?;
