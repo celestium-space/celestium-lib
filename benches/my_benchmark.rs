@@ -1,13 +1,11 @@
 use celestium::{transaction_value::TransactionValue, wallet::Wallet};
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::time::Duration;
 
 fn single_core_mining_speed(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Single threaded mining test");
-    group
-        .sample_size(10)
-        .measurement_time(Duration::new(2000, 0));
-    group.bench_function("Mining speed test", |b| {
+    let mut group = c.benchmark_group("Single threaded mining");
+    group.sample_size(10);
+    //     .measurement_time(Duration::new(2000, 0));
+    group.bench_function("Mining speed", |b| {
         b.iter(|| {
             let (pk2, _) = Wallet::generate_ec_keys();
             let mut wallet = Wallet::generate_init_blockchain(true).unwrap();

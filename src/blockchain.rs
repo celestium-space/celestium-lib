@@ -1,7 +1,6 @@
 use crate::{
     block::Block,
     block_hash::BlockHash,
-    block_version::BlockVersion,
     merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
     transaction_varuint::TransactionVarUint,
@@ -83,7 +82,7 @@ impl Blockchain {
             None => back_hash = BlockHash::default(),
         }
         let unmined_block = Block::new(
-            BlockVersion::default(),
+            TransactionVarUint::from(0),
             merkle_root,
             back_hash,
             TransactionVarUint::from(0),
