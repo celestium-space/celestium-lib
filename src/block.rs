@@ -1,7 +1,6 @@
 use crate::{
     block_hash::BlockHash,
     block_version::BlockVersion,
-    merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize, StaticSized},
     transaction_varuint::TransactionVarUint,
 };
@@ -69,7 +68,7 @@ impl Serialize for Block {
 impl DynamicSized for Block {
     fn serialized_len(&self) -> usize {
         BlockVersion::serialized_len()
-            + HASH_SIZE
+            + BlockHash::serialized_len()
             + BlockHash::serialized_len()
             + self.magic.serialized_len()
     }

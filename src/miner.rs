@@ -2,10 +2,12 @@ use crate::{
     block::Block,
     block_hash::BlockHash,
     block_version::BlockVersion,
+    magic::Magic,
     serialize::{DynamicSized, Serialize},
     transaction::Transaction,
     transaction_varuint::TransactionVarUint,
 };
+//use crypto::{digest::Digest, sha2::Sha256};
 use sha2::{Digest, Sha256};
 use std::{ops::Range, task::Poll};
 
@@ -14,8 +16,9 @@ pub struct Miner {
     my_serialized_block: Vec<u8>,
     i: u64,
     end: u64,
-    current_magic: TransactionVarUint,
     pub transactions: Vec<Transaction>,
+    magic_start: usize,
+    magic_len: usize,
 }
 
 impl Miner {
@@ -46,29 +49,31 @@ impl Miner {
         let block_len = serialized_block.len();
         let mut my_serialized_block = vec![0u8; block_len + 7];
         my_serialized_block[0..block_len].copy_from_slice(&serialized_block);
-        let magic = TransactionVarUint::from(range.start as usize);
+        let magic_start = block_len - 1;
         Miner {
             my_serialized_block,
             i: range.start,
             end: range.end,
-            current_magic: magic,
             transactions,
+            magic_start,
+            magic_len: 1,
         }
     }
 
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
-        let magic_start = self.my_serialized_block.len() - 8;
-        let magic_end = magic_start + self.current_magic.serialized_len();
-        self.my_serialized_block[magic_start..magic_end].copy_from_slice(&self.current_magic.value);
-        let hash = Sha256::digest(&self.my_serialized_block[0..magic_end]).to_vec();
-        if BlockHash::contains_enough_work(&hash) {
+        let magic_end = self.magic_start + self.magic_len;
+        let hash = Sha256::digest(&self.my_serialized_block[0..magic_end]);
+        if self.i < self.end && !BlockHash::contains_enough_work(&hash) {
+            self.magic_len = Magic::increase(
+                &mut self.my_serialized_block[self.magic_start..],
+                self.magic_len,
+            );
+            self.i += 1;
+            Poll::Pending
+        } else if self.i < self.end {
             let block =
                 *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
             Poll::Ready(Some(block))
-        } else if self.i < self.end {
-            self.current_magic.increase();
-            self.i += 1;
-            Poll::Pending
         } else {
             Poll::Ready(None)
         }
