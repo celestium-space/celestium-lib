@@ -1,12 +1,14 @@
 use crate::{
     block::Block,
     block_hash::BlockHash,
+    block_version::BlockVersion,
     magic::Magic,
     serialize::{DynamicSized, Serialize},
     transaction::Transaction,
     transaction_varuint::TransactionVarUint,
 };
-use crypto::{digest::Digest, sha2::Sha256};
+//use crypto::{digest::Digest, sha2::Sha256};
+use sha2::{Digest, Sha256};
 use std::{ops::Range, task::Poll};
 
 #[derive(Clone)]
@@ -27,7 +29,7 @@ impl Miner {
         start: u64,
         end: u64,
     ) -> Result<Self, String> {
-        let version = TransactionVarUint::from(0);
+        let version = BlockVersion::default();
         let magic = TransactionVarUint::from(0);
         let block = Block::new(version, merkle_root, back_hash, magic);
         let mut block_serialized = vec![0u8; block.serialized_len()];
@@ -60,10 +62,7 @@ impl Miner {
 
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
         let magic_end = self.magic_start + self.magic_len;
-        let mut hasher = Sha256::new();
-        hasher.input(&self.my_serialized_block[0..magic_end]);
-        let mut hash = [0; 32];
-        hasher.result(&mut hash);
+        let hash = Sha256::digest(&self.my_serialized_block[0..magic_end]);
         if self.i < self.end && !BlockHash::contains_enough_work(&hash) {
             self.magic_len = Magic::increase(
                 &mut self.my_serialized_block[self.magic_start..],

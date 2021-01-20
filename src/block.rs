@@ -1,5 +1,6 @@
 use crate::{
     block_hash::BlockHash,
+    block_version::BlockVersion,
     serialize::{DynamicSized, Serialize, StaticSized},
     transaction_varuint::TransactionVarUint,
 };
@@ -7,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
 pub struct Block {
-    pub version: TransactionVarUint,
+    pub version: BlockVersion,
     pub merkle_root: BlockHash,
     pub back_hash: BlockHash,
     pub magic: TransactionVarUint,
@@ -15,7 +16,7 @@ pub struct Block {
 
 impl Block {
     pub fn new(
-        version: TransactionVarUint,
+        version: BlockVersion,
         merkle_root: BlockHash,
         back_hash: BlockHash,
         magic: TransactionVarUint,
@@ -39,7 +40,7 @@ impl Block {
 
 impl Serialize for Block {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Block>, String> {
-        let version = *TransactionVarUint::from_serialized(data, i)?;
+        let version = *BlockVersion::from_serialized(data, i)?;
         let merkle_root = *BlockHash::from_serialized(data, i)?;
         let back_hash = *BlockHash::from_serialized(data, i)?;
         let magic = *TransactionVarUint::from_serialized(data, i)?;
@@ -66,7 +67,7 @@ impl Serialize for Block {
 
 impl DynamicSized for Block {
     fn serialized_len(&self) -> usize {
-        self.version.serialized_len()
+        BlockVersion::serialized_len()
             + BlockHash::serialized_len()
             + BlockHash::serialized_len()
             + self.magic.serialized_len()
