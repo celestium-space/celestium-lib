@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["Jens Hegner Stærmose <jhs@artificialmind.ai>"]
 edition = "2018"
 
-[profile.release]
-debug = true
-
 [lib]
 name = "celestium"
 path = "src/lib.rs"
