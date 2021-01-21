@@ -60,47 +60,58 @@ mod tests {
     }
 
     #[test]
-    fn wallet_generation_and_mining_test() {
-        let (pk2, _) = crate::wallet::Wallet::generate_ec_keys();
-        match crate::wallet::Wallet::generate_init_blockchain(true) {
-            Ok(mut wallet) => {
-                match crate::transaction_value::TransactionValue::new_coin_transfer(500, 10) {
-                    Ok(value) => match wallet.send(pk2, value) {
-                        Ok(_) => match wallet.miner_from_off_chain_transactions(0, u64::MAX) {
-                            Ok(mut miner) => {
-                                let now = std::time::Instant::now();
-                                while miner.do_work().is_pending() {}
-                                match miner.do_work() {
-                                    std::task::Poll::Ready(_) => {
-                                        println!("Mining time: {}ms", now.elapsed().as_millis());
-                                        assert!(true)
-                                    }
-                                    std::task::Poll::Pending => {
-                                        println!("Mining error; Got pending after done");
-                                        assert!(false)
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                println!("{}", e);
-                                assert!(false)
-                            }
-                        },
-                        Err(e) => {
-                            println!("{}", e);
-                            assert!(false)
-                        }
-                    },
-                    Err(e) => {
-                        println!("{}", e);
-                        assert!(false)
-                    }
-                }
-            }
-            Err(e) => {
-                println!("{}", e);
-                assert!(false)
-            }
+    fn magic_len_test() {
+        for i in 1..crate::wallet::DEFAULT_N_PAR_WORKERS {
+            let var_uint = crate::transaction_varuint::TransactionVarUint::from(
+                (i * crate::wallet::DEFAULT_PAR_WORK) as usize,
+            );
+            println!("i: {:x} | {:x?}", i, var_uint.value);
+            assert_eq!(var_uint.value.len(), 3)
         }
     }
+
+    // #[test]
+    // fn wallet_generation_and_mining_test() {
+    //     let (pk2, _) = crate::wallet::Wallet::generate_ec_keys();
+    //     match crate::wallet::Wallet::generate_init_blockchain(true) {
+    //         Ok(mut wallet) => {
+    //             match crate::transaction_value::TransactionValue::new_coin_transfer(500, 10) {
+    //                 Ok(value) => match wallet.send(pk2, value) {
+    //                     Ok(_) => match wallet.miner_from_off_chain_transactions(0, u64::MAX) {
+    //                         Ok(mut miner) => {
+    //                             let now = std::time::Instant::now();
+    //                             while miner.do_work().is_pending() {}
+    //                             match miner.do_work() {
+    //                                 std::task::Poll::Ready(_) => {
+    //                                     println!("Mining time: {}ms", now.elapsed().as_millis());
+    //                                     assert!(true)
+    //                                 }
+    //                                 std::task::Poll::Pending => {
+    //                                     println!("Mining error; Got pending after done");
+    //                                     assert!(false)
+    //                                 }
+    //                             }
+    //                         }
+    //                         Err(e) => {
+    //                             println!("{}", e);
+    //                             assert!(false)
+    //                         }
+    //                     },
+    //                     Err(e) => {
+    //                         println!("{}", e);
+    //                         assert!(false)
+    //                     }
+    //                 },
+    //                 Err(e) => {
+    //                     println!("{}", e);
+    //                     assert!(false)
+    //                 }
+    //             }
+    //         }
+    //         Err(e) => {
+    //             println!("{}", e);
+    //             assert!(false)
+    //         }
+    //     }
+    // }
 }

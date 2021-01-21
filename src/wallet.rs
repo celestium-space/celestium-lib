@@ -20,8 +20,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::task::Poll;
 
-pub const DEFAULT_N_PAR_WORKERS: u64 = 16;
-pub const DEFAULT_PAR_WORK: u64 = 0x10000;
+pub const DEFAULT_N_PAR_WORKERS: u64 = 0x40;
+pub const DEFAULT_PAR_WORK: u64 = 0x8000;
 
 pub struct BinaryWallet {
     pub blockchain_bin: Vec<u8>,
