@@ -21,6 +21,16 @@ impl TransactionVarUint {
         value
     }
 
+    // pub fn get_value_from_le(&self) -> usize {
+    //     let mut value = 0usize;
+    //     let mut i = 0usize;
+    //     for byte in self.value.iter() {
+    //         value += ((byte & 0x7f) as usize) << i;
+    //         i += 7;
+    //     }
+    //     value
+    // }
+
     pub fn increase(&mut self) {
         let mut last_index = self.value.len() - 1;
         if self.value[last_index] < 0x7f {
@@ -48,6 +58,35 @@ impl TransactionVarUint {
             false
         }
     }
+
+    // pub fn le_from(value: usize) -> Self {
+    //     if value == 0 {
+    //         return TransactionVarUint { value: vec![0u8] };
+    //     }
+    //     let mut tmp_value = value;
+    //     let mut bytes = Vec::new();
+
+    //     let mut n_non_zero_bytes = 0;
+    //     while tmp_value > 0 {
+    //         tmp_value >>= 8;
+    //         n_non_zero_bytes += 1;
+    //         println!("i: {}", n_non_zero_bytes);
+    //     }
+    //     bytes.push(0x80 + (value & (0xff >> n_non_zero_bytes)) as u8);
+    //     println!("bytes[0]: {:x}", bytes[0]);
+
+    //     tmp_value = value;
+    //     tmp_value >>= n_non_zero_bytes;
+    //     println!("shift: {} | tmp_value: {:x}", n_non_zero_bytes, tmp_value);
+    //     while tmp_value > 0 {
+    //         bytes.push(0x80 + (tmp_value & 0x7f) as u8);
+    //         tmp_value >>= 7;
+    //     }
+    //     if let Some(last) = bytes.last_mut() {
+    //         *last &= 0x7fu8;
+    //     }
+    //     TransactionVarUint { value: bytes }
+    // }
 }
 
 impl From<usize> for TransactionVarUint {

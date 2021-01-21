@@ -1,12 +1,19 @@
 use celestium::{transaction_value::TransactionValue, wallet::Wallet};
 use criterion::{criterion_group, criterion_main, Criterion};
 
-fn single_core_mining_speed(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Single threaded mining");
+fn criterion_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Multi threaded mining");
     group.bench_function("Mining speed", |b| {
         b.iter(|| {
-            let (pk2, _) = Wallet::generate_ec_keys();
-            let mut wallet = Wallet::generate_init_blockchain(true).unwrap();
+            Wallet::generate_init_blockchain(true).unwrap();
+        })
+    });
+    group.finish();
+    let mut group = c.benchmark_group("Single threaded mining");
+    let (pk2, _) = Wallet::generate_ec_keys();
+    let mut wallet = Wallet::generate_init_blockchain(true).unwrap();
+    group.bench_function("Mining speed", |b| {
+        b.iter(|| {
             let value = TransactionValue::new_coin_transfer(500, 10).unwrap();
             wallet.send(pk2, value).unwrap();
             let mut miner = wallet
@@ -18,5 +25,5 @@ fn single_core_mining_speed(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, single_core_mining_speed);
+criterion_group!(benches, criterion_benches);
 criterion_main!(benches);
