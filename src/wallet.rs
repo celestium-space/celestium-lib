@@ -509,20 +509,17 @@ impl Wallet {
     ) -> (Block, Vec<Transaction>) {
         let mut i = 0;
         loop {
-            let list: Vec<u64> = (0..1000).collect();
+            let list: Vec<u64> = (0..n_par_workers).collect();
             match list
                 .par_iter()
                 .filter_map(|&j| {
                     let start = i + j * par_work;
-                    let end = i + (j + 1) * par_work;
+                    let end = i + (j + 1) * par_work - 1;
                     let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
                     while miner.do_work().is_pending() {}
                     match miner.do_work() {
                         Poll::Ready(block) => match block {
-                            Some(b) => {
-                                println!("FOUND!");
-                                Some((b, miner.transactions))
-                            }
+                            Some(b) => Some((b, miner.transactions)),
                             None => None,
                         },
                         Poll::Pending => {

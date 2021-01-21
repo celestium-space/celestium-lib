@@ -1,7 +1,4 @@
-use celestium::{
-    transaction_value::TransactionValue, wallet::Wallet, wallet::DEFAULT_N_PAR_WORKERS,
-    wallet::DEFAULT_PAR_WORK,
-};
+use celestium::{transaction_value::TransactionValue, wallet::Wallet};
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn criterion_benches(c: &mut Criterion) {

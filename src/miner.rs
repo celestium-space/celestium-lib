@@ -30,34 +30,28 @@ impl Miner {
         end: u64,
     ) -> Result<Self, String> {
         let version = BlockVersion::default();
-        let magic = TransactionVarUint::from(start);
+        let magic = TransactionVarUint::from(start as usize);
         let block = Block::new(version, merkle_root, back_hash, magic);
-        let mut block_serialized = vec![0u8; block.serialized_len()];
-        block.serialize_into(&mut block_serialized, &mut 0)?;
-        Ok(Miner::new_ranged(
-            block_serialized,
-            start..end,
-            transactions,
-        ))
+        Miner::new_ranged(block, start..end, transactions)
     }
 
     pub fn new_ranged(
-        serialized_block: Vec<u8>,
+        block: Block,
         range: Range<u64>,
         transactions: Vec<Transaction>,
-    ) -> Self {
-        let block_len = serialized_block.len();
-        let mut my_serialized_block = vec![0u8; block_len + 7];
-        my_serialized_block[0..block_len].copy_from_slice(&serialized_block);
-        let magic_start = block_len - 1;
-        Miner {
+    ) -> Result<Self, String> {
+        let magic_len = block.magic.serialized_len();
+        let block_len = block.serialized_len();
+        let mut my_serialized_block = vec![0u8; block_len - magic_len + 8];
+        block.serialize_into(&mut my_serialized_block, &mut 0)?;
+        Ok(Miner {
             my_serialized_block,
             i: range.start,
             end: range.end,
             transactions,
-            magic_start,
-            magic_len: 1,
-        }
+            magic_start: block_len - magic_len,
+            magic_len,
+        })
     }
 
     pub fn do_work(&mut self) -> Poll<Option<Block>> {

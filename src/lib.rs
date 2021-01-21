@@ -18,7 +18,49 @@ pub mod wallet;
 #[cfg(test)]
 mod tests {
     #[test]
-    fn single_core_mining_speed() {
+    fn var_uint_from_usize() {
+        let var_uint = crate::transaction_varuint::TransactionVarUint::from(0x12345678);
+        assert_eq!(
+            var_uint.value,
+            [0b10000001, 0b10010001, 0b11010001, 0b10101100, 0b01111000]
+        );
+        assert_eq!(var_uint.get_value(), 0x12345678);
+    }
+
+    #[test]
+    fn magic_increase1() {
+        let mut var_uint = crate::transaction_varuint::TransactionVarUint::from(0x12345678);
+        let len = var_uint.value.len();
+        crate::magic::Magic::increase(&mut var_uint.value, len);
+        assert_eq!(var_uint.get_value(), 0x12345679)
+    }
+
+    #[test]
+    fn magic_increase2() {
+        let mut var_uint = crate::transaction_varuint::TransactionVarUint::from(0xff00ff);
+        let len = var_uint.value.len();
+        crate::magic::Magic::increase(&mut var_uint.value, len);
+        assert_eq!(var_uint.get_value(), 0xff0100)
+    }
+
+    #[test]
+    fn magic_increase3() {
+        let mut var_uint = crate::transaction_varuint::TransactionVarUint::from(0xffffff);
+        let len = var_uint.value.len();
+        crate::magic::Magic::increase(&mut var_uint.value, len);
+        assert_eq!(var_uint.get_value(), 0x1000000)
+    }
+
+    #[test]
+    fn magic_increase4() {
+        let mut var_uint = crate::transaction_varuint::TransactionVarUint::from(0);
+        let len = var_uint.value.len();
+        crate::magic::Magic::increase(&mut var_uint.value, len);
+        assert_eq!(var_uint.get_value(), 0x1)
+    }
+
+    #[test]
+    fn wallet_generation_and_mining_test() {
         let (pk2, _) = crate::wallet::Wallet::generate_ec_keys();
         match crate::wallet::Wallet::generate_init_blockchain(true) {
             Ok(mut wallet) => {
