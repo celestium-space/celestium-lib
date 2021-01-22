@@ -61,13 +61,22 @@ mod tests {
 
     #[test]
     fn magic_len_test() {
+        let var_uint = crate::transaction_varuint::TransactionVarUint::from(
+            crate::wallet::DEFAULT_PAR_WORK as usize,
+        );
+        let test_len = var_uint.value.len();
         for i in 1..crate::wallet::DEFAULT_N_THREADS {
             let var_uint = crate::transaction_varuint::TransactionVarUint::from(
                 (i * crate::wallet::DEFAULT_PAR_WORK) as usize,
             );
-            println!("i: {:x} | {:x?}", i, var_uint.value);
-            assert_eq!(var_uint.value.len(), 3)
+            println!("{}: {:x?}", i, var_uint.value);
+            assert_eq!(var_uint.value.len(), test_len)
         }
+        let var_uint = crate::transaction_varuint::TransactionVarUint::from(
+            ((crate::wallet::DEFAULT_N_THREADS + 1) * crate::wallet::DEFAULT_PAR_WORK) as usize,
+        );
+        println!("l: {:x?}", var_uint.value);
+        assert_eq!(var_uint.value.len(), test_len + 1)
     }
 
     // #[test]

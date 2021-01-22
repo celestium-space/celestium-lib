@@ -7,8 +7,7 @@ use crate::{
     transaction::Transaction,
     transaction_varuint::TransactionVarUint,
 };
-//use crypto::{digest::Digest, sha2::Sha256};
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 use std::{ops::Range, task::Poll};
 
 #[derive(Clone)]
@@ -56,7 +55,7 @@ impl Miner {
 
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
         let magic_end = self.magic_start + self.magic_len;
-        let hash = Sha256::digest(&self.my_serialized_block[0..magic_end]);
+        let hash = Sha3_256::digest(&self.my_serialized_block[0..magic_end]);
         if self.i < self.end && !BlockHash::contains_enough_work(&hash) {
             self.magic_len = Magic::increase(
                 &mut self.my_serialized_block[self.magic_start..],

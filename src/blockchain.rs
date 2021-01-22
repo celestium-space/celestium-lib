@@ -6,7 +6,7 @@ use crate::{
     serialize::{DynamicSized, Serialize},
     transaction_varuint::TransactionVarUint,
 };
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 
 pub struct Blockchain {
@@ -36,7 +36,7 @@ impl Blockchain {
             let block = *Block::from_serialized(&data, &mut i)?;
             if block.back_hash.hash().to_vec() == hash {
                 let block_len = block.serialized_len();
-                hash = Sha256::digest(&data[*i - block_len..*i]).to_vec();
+                hash = Sha3_256::digest(&data[*i - block_len..*i]).to_vec();
                 if BlockHash::contains_enough_work(&hash) {
                     return Err(format!(
                         "Blockchain - Block with len {} at byte {} with magic {}, hashes to {:x?}, which does not represent enough work",
@@ -74,7 +74,7 @@ impl Blockchain {
                         .unwrap()
                         .serialize_into(&mut last_block_serialized, &mut i)?;
                     back_hash = *BlockHash::from_serialized(
-                        &Sha256::digest(&last_block_serialized[..i]),
+                        &Sha3_256::digest(&last_block_serialized[..i]),
                         &mut 0,
                     )?;
                 }

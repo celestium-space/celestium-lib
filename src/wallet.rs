@@ -16,12 +16,12 @@ use crate::{
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::task::Poll;
 
-pub const DEFAULT_N_THREADS: u64 = 0x40;
-pub const DEFAULT_PAR_WORK: u64 = 0x8000;
+pub const DEFAULT_N_THREADS: u64 = 0x10;
+pub const DEFAULT_PAR_WORK: u64 = 0x20000;
 
 pub struct BinaryWallet {
     pub blockchain_bin: Vec<u8>,
@@ -424,7 +424,7 @@ impl Wallet {
         while i < data.len() {
             let pre_i = i;
             let mut hash = [0; 32];
-            hash.copy_from_slice(Sha256::digest(&data[pre_i..i]).as_slice());
+            hash.copy_from_slice(Sha3_256::digest(&data[pre_i..i]).as_slice());
             transactions.push(*Transaction::from_serialized(&data, &mut i)?);
         }
         Ok(transactions)
@@ -458,7 +458,7 @@ impl Wallet {
             let block = *Block::from_serialized(&serialized_blocks, &mut i)?;
             let block_len = block.serialized_len();
             if block.back_hash.hash().to_vec() == hash {
-                hash = Sha256::digest(&serialized_blocks[i - block_len..i]).to_vec();
+                hash = Sha3_256::digest(&serialized_blocks[i - block_len..i]).to_vec();
                 if !BlockHash::contains_enough_work(&hash) {
                     return Err(format!(
                         "Wallet - Block with len {} at byte {} with magic {}, hashes to {:x?}, which does not represent enough work",
@@ -526,23 +526,19 @@ impl Wallet {
         match &self.thread_pool {
             Some(thread_pool) => thread_pool.install(|| loop {
                 let list: Vec<u64> = (0..n_par_workers).collect();
-                match list
-                    .par_iter()
-                    .filter_map(|&j| {
-                        let start = i + j * par_work;
-                        let end = i + (j + 1) * par_work - 1;
-                        let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
-                        while miner.do_work().is_pending() {}
-                        match miner.do_work() {
-                            Poll::Ready(block) => match block {
-                                Some(b) => Some((b, miner.transactions)),
-                                None => None,
-                            },
-                            Poll::Pending => None,
-                        }
-                    })
-                    .find_any(|_| true)
-                {
+                match list.par_iter().find_map_any(|&j| {
+                    let start = i + j * par_work;
+                    let end = i + (j + 1) * par_work - 1;
+                    let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
+                    while miner.do_work().is_pending() {}
+                    match miner.do_work() {
+                        Poll::Ready(block) => match block {
+                            Some(b) => Some((b, miner.transactions)),
+                            None => None,
+                        },
+                        Poll::Pending => None,
+                    }
+                }) {
                     Some(r) => break r,
                     None => i += n_par_workers * par_work,
                 }
@@ -567,7 +563,7 @@ impl Wallet {
 
         let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
         let mut data_hash = [0u8; HASH_SIZE];
-        data_hash.copy_from_slice(&Sha256::digest(b"Hello, World!"));
+        data_hash.copy_from_slice(&Sha3_256::digest(b"Hello, World!"));
         let t0 = Transaction::new(
             TransactionVersion::default(),
             Vec::new(),

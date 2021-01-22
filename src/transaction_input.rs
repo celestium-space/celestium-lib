@@ -3,7 +3,7 @@ use crate::{
     transaction_varuint::TransactionVarUint,
 };
 use secp256k1::Signature;
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 
 const SECP256K1_SIG_LEN: usize = 64;
 const HASH_SIZE: usize = 32;
@@ -28,7 +28,7 @@ impl TransactionInput {
         let mut hash = [0u8; HASH_SIZE];
         let mut self_serialized = vec![0u8; self.serialized_len()];
         self.serialize_into(&mut self_serialized, &mut 0).unwrap();
-        hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
+        hash.copy_from_slice(Sha3_256::digest(&self_serialized).as_slice());
         hash
     }
 
@@ -40,7 +40,7 @@ impl TransactionInput {
         self.index
             .serialize_into(&mut self_serialized, &mut i)
             .unwrap();
-        hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
+        hash.copy_from_slice(Sha3_256::digest(&self_serialized).as_slice());
         hash
     }
 }

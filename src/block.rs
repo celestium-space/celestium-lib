@@ -4,7 +4,7 @@ use crate::{
     serialize::{DynamicSized, Serialize, StaticSized},
     transaction_varuint::TransactionVarUint,
 };
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 
 #[derive(Clone)]
 pub struct Block {
@@ -33,7 +33,7 @@ impl Block {
         let mut hash = [0u8; 32];
         let mut self_serialized = vec![0u8; self.serialized_len()];
         self.serialize_into(&mut self_serialized, &mut 0).unwrap();
-        hash.copy_from_slice(Sha256::digest(&self_serialized).as_slice());
+        hash.copy_from_slice(Sha3_256::digest(&self_serialized).as_slice());
         hash
     }
 }

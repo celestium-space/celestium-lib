@@ -4,20 +4,14 @@ version = "0.1.0"
 authors = ["Jens Hegner Stærmose <jhs@artificialmind.ai>"]
 edition = "2018"
 
-[profile.bench]
-debug = true
-
 [lib]
 name = "celestium"
 path = "src/lib.rs"
 
 [dependencies]
-sha2 = "0.9.2"
-num = "0.3.1"
-chrono = "0.4.19"
-rayon = "1.5.0"
-ring = "0.16.19"
-criterion = "*"
+sha3 = "0.9"
+rayon = "1.5"
+criterion = "0.3"
 
 [dependencies.rand]
 version = "0.6"

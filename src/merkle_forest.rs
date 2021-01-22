@@ -2,7 +2,7 @@ use crate::{
     serialize::{DynamicSized, Serialize},
     transaction::Transaction,
 };
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 
 pub const HASH_SIZE: usize = 32;
@@ -27,7 +27,7 @@ impl Node {
 
     pub fn hash(&self) -> [u8; HASH_SIZE] {
         let mut hash = [0; HASH_SIZE];
-        hash.copy_from_slice(Sha256::digest(&self.serialize()).as_slice());
+        hash.copy_from_slice(Sha3_256::digest(&self.serialize()).as_slice());
         hash
     }
 }

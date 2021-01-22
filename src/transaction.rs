@@ -7,7 +7,7 @@ use crate::{
     transaction_version::TransactionVersion,
 };
 use secp256k1::{Message, Secp256k1, SecretKey};
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 
 #[derive(Clone)]
 pub struct Transaction {
@@ -37,7 +37,7 @@ impl Transaction {
         let mut data = vec![0; self.serialized_len()];
         self.serialize_into(&mut data, &mut 0).unwrap();
         let mut hash = [0; 32];
-        hash.copy_from_slice(&Sha256::digest(&data));
+        hash.copy_from_slice(&Sha3_256::digest(&data));
         hash
     }
 
@@ -65,7 +65,7 @@ impl Transaction {
             i += HASH_SIZE;
         }
         let mut hash = [0u8; HASH_SIZE];
-        hash.copy_from_slice(&Sha256::digest(&digest));
+        hash.copy_from_slice(&Sha3_256::digest(&digest));
         hash
     }
 
@@ -82,7 +82,8 @@ impl Transaction {
             None => {
                 let secp = Secp256k1::new();
                 let message =
-                    Message::from_slice(Sha256::digest(&self.get_sign_hash()).as_slice()).unwrap();
+                    Message::from_slice(Sha3_256::digest(&self.get_sign_hash()).as_slice())
+                        .unwrap();
                 self.inputs[index].signature = Some(secp.sign(&message, &sk));
                 Ok(true)
             }
