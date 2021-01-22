@@ -13,14 +13,14 @@ use crate::{
     transaction_varuint::TransactionVarUint,
     transaction_version::TransactionVersion,
 };
-use rayon::prelude::*;
+use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::task::Poll;
 
-pub const DEFAULT_N_PAR_WORKERS: u64 = 0x40;
+pub const DEFAULT_N_THREADS: u64 = 0x40;
 pub const DEFAULT_PAR_WORK: u64 = 0x8000;
 
 pub struct BinaryWallet {
@@ -42,7 +42,7 @@ pub struct Wallet {
     unspent_outputs: HashMap<([u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
     off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
-    is_miner: bool,
+    thread_pool: Option<ThreadPool>,
 }
 
 impl Wallet {
@@ -55,7 +55,7 @@ impl Wallet {
             unspent_outputs: HashMap::new(),
             root_lookup: HashMap::new(),
             off_chain_transactions: HashMap::new(),
-            is_miner: false,
+            thread_pool: None,
         }
     }
 
@@ -68,7 +68,12 @@ impl Wallet {
             unspent_outputs: HashMap::new(),
             root_lookup: HashMap::new(),
             off_chain_transactions: HashMap::new(),
-            is_miner: true,
+            thread_pool: Some(
+                ThreadPoolBuilder::new()
+                    .num_threads(DEFAULT_N_THREADS as usize)
+                    .build()
+                    .unwrap(),
+            ),
         }
     }
 
@@ -111,6 +116,16 @@ impl Wallet {
                 *Transaction::from_serialized(&binary_wallet.off_chain_transactions_bin, &mut i)?;
             off_chain_transactions.insert(transaction.hash(), transaction);
         }
+        let thread_pool = if is_miner {
+            Some(
+                ThreadPoolBuilder::new()
+                    .num_threads(DEFAULT_N_THREADS as usize)
+                    .build()
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
         Ok(Wallet {
             blockchain,
             pk: Some(pk),
@@ -119,7 +134,7 @@ impl Wallet {
             unspent_outputs,
             root_lookup,
             off_chain_transactions,
-            is_miner,
+            thread_pool,
         })
     }
 
@@ -355,7 +370,7 @@ impl Wallet {
         block_hash: [u8; HASH_SIZE],
         merkle_root_hash: [u8; HASH_SIZE],
     ) -> Result<(), String> {
-        let new_branches = if self.is_miner {
+        let new_branches = if self.thread_pool.is_some() {
             let (mf, root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
             if root != merkle_root_hash {
                 return Err(format!("Creating merkle tree from transactions does not result in correct root, expected {:?} got {:?}", root, block_hash));
@@ -371,7 +386,7 @@ impl Wallet {
             let transaction_hash = transaction.hash();
             for (i, output) in transaction.outputs.iter().enumerate() {
                 let index = TransactionVarUint::from(i);
-                if self.is_miner
+                if self.thread_pool.is_some()
                     && !self
                         .unspent_outputs
                         .contains_key(&(transaction_hash, index.clone()))
@@ -481,7 +496,7 @@ impl Wallet {
     }
 
     pub fn get_serialized_blockchain(&self, n: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>), String> {
-        if self.is_miner {
+        if self.thread_pool.is_some() {
             let mut buffer = vec![0; self.blockchain.serialized_len()];
             let merkle_roots = self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
             let mut serialized_tree_leafs = Vec::new();
@@ -502,36 +517,47 @@ impl Wallet {
         }
     }
 
-    pub fn parallel_mine_off_chain_transactions(
+    pub fn mine_off_chain_transactions(
         &self,
         n_par_workers: u64,
         par_work: u64,
     ) -> (Block, Vec<Transaction>) {
         let mut i = 0;
-        loop {
-            let list: Vec<u64> = (0..n_par_workers).collect();
-            match list
-                .par_iter()
-                .filter_map(|&j| {
-                    let start = i + j * par_work;
-                    let end = i + (j + 1) * par_work - 1;
-                    let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
-                    while miner.do_work().is_pending() {}
-                    match miner.do_work() {
-                        Poll::Ready(block) => match block {
-                            Some(b) => Some((b, miner.transactions)),
-                            None => None,
-                        },
-                        Poll::Pending => {
-                            println!("FUCK!");
-                            None
+        match &self.thread_pool {
+            Some(thread_pool) => thread_pool.install(|| loop {
+                let list: Vec<u64> = (0..n_par_workers).collect();
+                match list
+                    .par_iter()
+                    .filter_map(|&j| {
+                        let start = i + j * par_work;
+                        let end = i + (j + 1) * par_work - 1;
+                        let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
+                        while miner.do_work().is_pending() {}
+                        match miner.do_work() {
+                            Poll::Ready(block) => match block {
+                                Some(b) => Some((b, miner.transactions)),
+                                None => None,
+                            },
+                            Poll::Pending => None,
                         }
+                    })
+                    .find_any(|_| true)
+                {
+                    Some(r) => break r,
+                    None => i += n_par_workers * par_work,
+                }
+            }),
+            None => {
+                let mut miner = self.miner_from_off_chain_transactions(0, u64::MAX).unwrap();
+                loop {
+                    match miner.do_work() {
+                        Poll::Ready(b) => match b {
+                            Some(b) => break (b, miner.transactions),
+                            None => {}
+                        },
+                        Poll::Pending => {}
                     }
-                })
-                .find_any(|_| true)
-            {
-                Some(r) => break r,
-                None => i += n_par_workers * par_work,
+                }
             }
         }
     }
@@ -560,7 +586,7 @@ impl Wallet {
         wallet.add_off_chain_transaction(t0)?;
 
         let (done_block, done_transactions) =
-            wallet.parallel_mine_off_chain_transactions(DEFAULT_N_PAR_WORKERS, DEFAULT_PAR_WORK);
+            wallet.mine_off_chain_transactions(DEFAULT_N_THREADS, DEFAULT_PAR_WORK);
         let block_hash = done_block.hash();
         let merkle_root_hash = done_block.merkle_root.hash();
         wallet.add_block(done_block)?;

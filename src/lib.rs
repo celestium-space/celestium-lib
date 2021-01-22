@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn magic_len_test() {
-        for i in 1..crate::wallet::DEFAULT_N_PAR_WORKERS {
+        for i in 1..crate::wallet::DEFAULT_N_THREADS {
             let var_uint = crate::transaction_varuint::TransactionVarUint::from(
                 (i * crate::wallet::DEFAULT_PAR_WORK) as usize,
             );
