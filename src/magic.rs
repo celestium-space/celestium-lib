@@ -18,7 +18,7 @@ impl Magic {
         if magic_area[last] != 0x7f && magic_area[last] != u8::MAX {
             // Normal counting
             magic_area[last] += 1;
-            return false;
+            false
         } else if last != 0 {
             // Inter-number byte reached max
             if magic_area[last] == u8::MAX {

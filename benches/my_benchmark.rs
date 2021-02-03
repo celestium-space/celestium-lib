@@ -1,4 +1,4 @@
-use celestium::{transaction_value::TransactionValue, wallet::Wallet};
+use celestium::{miner::Miner, transaction_value::TransactionValue, wallet::Wallet};
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn criterion_benches(c: &mut Criterion) {
@@ -16,9 +16,8 @@ fn criterion_benches(c: &mut Criterion) {
         b.iter(|| {
             let value = TransactionValue::new_coin_transfer(500, 10).unwrap();
             wallet.send(pk2, value).unwrap();
-            let mut miner = wallet
-                .miner_from_off_chain_transactions(0, u64::MAX)
-                .unwrap();
+            let (block, _) = wallet.mining_data_from_off_chain_transactions().unwrap();
+            let mut miner = Miner::new_ranged(block, 0..u64::MAX).unwrap();
             while miner.do_work().is_pending() {}
         })
     });

@@ -1,6 +1,7 @@
 use crate::{
     block::Block,
     block_hash::BlockHash,
+    block_version::BlockVersion,
     blockchain::Blockchain,
     ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
     merkle_forest::{MerkleForest, Node, HASH_SIZE},
@@ -320,12 +321,9 @@ impl Wallet {
         }
     }
 
-    pub fn miner_from_off_chain_transactions(
+    pub fn mining_data_from_off_chain_transactions(
         &self,
-        //hash: [u8; HASH_SIZE],
-        start: u64,
-        end: u64,
-    ) -> Result<Miner, String> {
+    ) -> Result<(Block, Vec<Transaction>), String> {
         match self.pk {
             Some(pk) => {
                 let mut total_fee = 0;
@@ -349,16 +347,12 @@ impl Wallet {
                     ],
                 ));
                 let (_, merkle_root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
-                //return Err(format!("Root: {:?}", merkle_root));
                 let back_hash =
                     *BlockHash::from_serialized(&self.blockchain.get_head_hash(), &mut 0)?;
-                Miner::new_from_hashes(
-                    BlockHash::from(merkle_root),
-                    back_hash,
-                    transactions,
-                    start,
-                    end,
-                )
+                let magic = TransactionVarUint::from(0);
+                let version = BlockVersion::default();
+                let block = Block::new(version, BlockHash::from(merkle_root), back_hash, magic);
+                Ok((block, transactions))
             }
             None => Err(String::from("Need public key to mine")),
         }
@@ -517,11 +511,7 @@ impl Wallet {
         }
     }
 
-    pub fn mine_off_chain_transactions(
-        &self,
-        n_par_workers: u64,
-        par_work: u64,
-    ) -> (Block, Vec<Transaction>) {
+    pub fn mine_block(&self, n_par_workers: u64, par_work: u64, block: Block) -> Option<Block> {
         let mut i = 0;
         match &self.thread_pool {
             Some(thread_pool) => thread_pool.install(|| loop {
@@ -529,29 +519,22 @@ impl Wallet {
                 match list.par_iter().find_map_any(|&j| {
                     let start = i + j * par_work;
                     let end = i + (j + 1) * par_work - 1;
-                    let mut miner = self.miner_from_off_chain_transactions(start, end).unwrap();
+                    let mut miner = Miner::new_ranged(block.clone(), start..end).unwrap();
                     while miner.do_work().is_pending() {}
                     match miner.do_work() {
-                        Poll::Ready(block) => match block {
-                            Some(b) => Some((b, miner.transactions)),
-                            None => None,
-                        },
+                        Poll::Ready(block) => block,
                         Poll::Pending => None,
                     }
                 }) {
-                    Some(r) => break r,
+                    Some(r) => break Some(r),
                     None => i += n_par_workers * par_work,
                 }
             }),
             None => {
-                let mut miner = self.miner_from_off_chain_transactions(0, u64::MAX).unwrap();
+                let mut miner = Miner::new_ranged(block, 0..u64::MAX).unwrap();
                 loop {
-                    match miner.do_work() {
-                        Poll::Ready(b) => match b {
-                            Some(b) => break (b, miner.transactions),
-                            None => {}
-                        },
-                        Poll::Pending => {}
+                    if let Poll::Ready(Some(b)) = miner.do_work() {
+                        break Some(b);
                     }
                 }
             }
@@ -580,14 +563,17 @@ impl Wallet {
         };
 
         wallet.add_off_chain_transaction(t0)?;
-
-        let (done_block, done_transactions) =
-            wallet.mine_off_chain_transactions(DEFAULT_N_THREADS, DEFAULT_PAR_WORK);
-        let block_hash = done_block.hash();
-        let merkle_root_hash = done_block.merkle_root.hash();
-        wallet.add_block(done_block)?;
-        wallet.add_on_chain_transactions(done_transactions, block_hash, merkle_root_hash)?;
-        Ok(wallet)
+        let (block, transactions) = wallet.mining_data_from_off_chain_transactions().unwrap();
+        match wallet.mine_block(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, block) {
+            Some(done_block) => {
+                let block_hash = done_block.hash();
+                let merkle_root_hash = done_block.merkle_root.hash();
+                wallet.add_block(done_block)?;
+                wallet.add_on_chain_transactions(transactions, block_hash, merkle_root_hash)?;
+                Ok(wallet)
+            }
+            None => Err(String::from("Could not create block")),
+        }
     }
 
     pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {

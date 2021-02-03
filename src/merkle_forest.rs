@@ -18,17 +18,32 @@ impl Node {
         Node { left, right }
     }
 
-    pub fn serialize(&self) -> [u8; HASH_SIZE * 2] {
-        let mut serialized = [0; HASH_SIZE * 2];
-        serialized[0..HASH_SIZE].copy_from_slice(&self.left);
-        serialized[HASH_SIZE..HASH_SIZE * 2].copy_from_slice(&self.right);
-        serialized
-    }
-
     pub fn hash(&self) -> [u8; HASH_SIZE] {
         let mut hash = [0; HASH_SIZE];
-        hash.copy_from_slice(Sha3_256::digest(&self.serialize()).as_slice());
+        let mut serialized = [0; HASH_SIZE * 2];
+        self.serialize_into(&mut serialized, &mut 0).unwrap();
+        hash.copy_from_slice(Sha3_256::digest(&serialized).as_slice());
         hash
+    }
+}
+
+impl Serialize for Node {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
+        let mut left = [0u8; HASH_SIZE];
+        left.copy_from_slice(&data[*i..*i + HASH_SIZE]);
+        *i += HASH_SIZE;
+        let mut right = [0u8; HASH_SIZE];
+        right.copy_from_slice(&data[*i..HASH_SIZE]);
+        *i += HASH_SIZE;
+        Ok(Box::new(Node { left, right }))
+    }
+
+    fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
+        data[*i..*i + HASH_SIZE].copy_from_slice(&self.left);
+        *i += HASH_SIZE;
+        data[*i..*i + HASH_SIZE].copy_from_slice(&self.right);
+        *i += HASH_SIZE;
+        Ok(())
     }
 }
 
@@ -178,9 +193,9 @@ impl MerkleForest<Transaction> {
 
     pub fn serialize_all_nodes(&self) -> Result<Vec<u8>, String> {
         let mut serialized = vec![0; self.branches.len() * HASH_SIZE * 2];
-        let i = 0;
-        for node in self.branches.iter() {
-            serialized[i..HASH_SIZE].copy_from_slice(&node.1.serialize());
+        let mut i = 0;
+        for (_, node) in self.branches.iter() {
+            node.serialize_into(&mut serialized, &mut i)?;
         }
         Ok(serialized)
     }

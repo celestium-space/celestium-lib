@@ -69,58 +69,31 @@ mod tests {
             let var_uint = crate::transaction_varuint::TransactionVarUint::from(
                 (i * crate::wallet::DEFAULT_PAR_WORK) as usize,
             );
-            println!("{}: {:x?}", i, var_uint.value);
             assert_eq!(var_uint.value.len(), test_len)
         }
         let var_uint = crate::transaction_varuint::TransactionVarUint::from(
             ((crate::wallet::DEFAULT_N_THREADS + 1) * crate::wallet::DEFAULT_PAR_WORK) as usize,
         );
-        println!("l: {:x?}", var_uint.value);
         assert_eq!(var_uint.value.len(), test_len + 1)
     }
 
-    // #[test]
-    // fn wallet_generation_and_mining_test() {
-    //     let (pk2, _) = crate::wallet::Wallet::generate_ec_keys();
-    //     match crate::wallet::Wallet::generate_init_blockchain(true) {
-    //         Ok(mut wallet) => {
-    //             match crate::transaction_value::TransactionValue::new_coin_transfer(500, 10) {
-    //                 Ok(value) => match wallet.send(pk2, value) {
-    //                     Ok(_) => match wallet.miner_from_off_chain_transactions(0, u64::MAX) {
-    //                         Ok(mut miner) => {
-    //                             let now = std::time::Instant::now();
-    //                             while miner.do_work().is_pending() {}
-    //                             match miner.do_work() {
-    //                                 std::task::Poll::Ready(_) => {
-    //                                     println!("Mining time: {}ms", now.elapsed().as_millis());
-    //                                     assert!(true)
-    //                                 }
-    //                                 std::task::Poll::Pending => {
-    //                                     println!("Mining error; Got pending after done");
-    //                                     assert!(false)
-    //                                 }
-    //                             }
-    //                         }
-    //                         Err(e) => {
-    //                             println!("{}", e);
-    //                             assert!(false)
-    //                         }
-    //                     },
-    //                     Err(e) => {
-    //                         println!("{}", e);
-    //                         assert!(false)
-    //                     }
-    //                 },
-    //                 Err(e) => {
-    //                     println!("{}", e);
-    //                     assert!(false)
-    //                 }
-    //             }
-    //         }
-    //         Err(e) => {
-    //             println!("{}", e);
-    //             assert!(false)
-    //         }
-    //     }
-    // }
+    #[test]
+    fn wallet_generation_and_mining_test() {
+        match crate::wallet::Wallet::generate_init_blockchain(true) {
+            Ok(wallet) => match wallet.to_binary() {
+                Ok(bw) => {
+                    println!("{:x?}", bw.blockchain_bin);
+                    assert!(true)
+                }
+                Err(e) => {
+                    println!("{}", e);
+                    assert!(false)
+                }
+            },
+            Err(e) => {
+                println!("{}", e);
+                assert!(false)
+            }
+        }
+    }
 }
