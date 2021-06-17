@@ -64,13 +64,26 @@ impl MerkleForest<Transaction> {
     pub fn new_complete_from_leafs(leafs: Vec<Transaction>) -> Result<(Self, [u8; 32]), String> {
         if leafs.len() > 256 {
             return Err("Blockchain can only contain 256 leafs".to_string());
+        } else if leafs.len() == 1 {
+            return Ok((
+                MerkleForest {
+                    leafs: leafs
+                        .iter()
+                        .map(|x| (x.hash(), x.clone()))
+                        .collect::<HashMap<[u8; HASH_SIZE], Transaction>>(),
+                    branches: HashMap::default(),
+                },
+                leafs[0].hash(),
+            ));
         }
+
         let mut branches = HashMap::new();
         let mut branch_queue = leafs
             .iter()
             .map(|x| x.hash())
             .collect::<Vec<[u8; HASH_SIZE]>>();
         let mut root = None;
+        println!("bq: {:x?}", branch_queue);
         while branch_queue.len() > 1 {
             let mut tmp_branch_queue = Vec::new();
             for leaf_pair in branch_queue.chunks(2) {
