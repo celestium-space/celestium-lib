@@ -21,7 +21,7 @@ use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::task::Poll;
 
-pub const DEFAULT_N_THREADS: u64 = 0x10;
+pub const DEFAULT_N_THREADS: u64 = 0x2;
 pub const DEFAULT_PAR_WORK: u64 = 0x20000;
 
 pub struct BinaryWallet {
@@ -539,6 +539,55 @@ impl Wallet {
                 }
             }
         }
+    }
+
+    pub fn generate_init_blockchain_unmined(block_count: u128) -> Result<Vec<Block>, String> {
+        let (pk1, _) = Wallet::generate_ec_keys();
+        let (pk2, _) = Wallet::generate_ec_keys();
+
+        let pk1_balance = 10000;
+        let my_value = TransactionValue::new_coin_transfer(pk1_balance, 0)?;
+        let mut data_hash = [0u8; HASH_SIZE];
+        data_hash.copy_from_slice(&Sha3_256::digest(b"Hello, World!"));
+        let prev_transaction = Transaction::new(
+            TransactionVersion::default(),
+            Vec::new(),
+            vec![
+                TransactionOutput::new(my_value, pk1),
+                TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
+            ],
+        );
+        let t0_hash = prev_transaction.hash();
+
+        let mut blocks = vec![Block::new(
+            BlockVersion::default(),
+            BlockHash::from(MerkleForest::new_complete_from_leafs(vec![prev_transaction])?.1),
+            BlockHash::new_unworked(),
+            TransactionVarUint::from(0),
+        )];
+
+        for i in 1..block_count {
+            let transaction = Transaction::new(
+                TransactionVersion::default(),
+                vec![TransactionInput::new(t0_hash, TransactionVarUint::from(0))],
+                vec![
+                    TransactionOutput::new(TransactionValue::new_coin_transfer(i, 1).unwrap(), pk2),
+                    TransactionOutput::new(
+                        TransactionValue::new_coin_transfer(pk1_balance - i - 2, 1).unwrap(),
+                        pk1,
+                    ),
+                ],
+            );
+
+            blocks.push(Block::new(
+                BlockVersion::default(),
+                BlockHash::from(MerkleForest::new_complete_from_leafs(vec![transaction])?.1),
+                BlockHash::new_unworked(),
+                TransactionVarUint::from(0),
+            ));
+        }
+
+        return Ok(blocks);
     }
 
     pub fn generate_init_blockchain(is_miner: bool) -> Result<Wallet, String> {
