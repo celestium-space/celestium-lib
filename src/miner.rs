@@ -19,15 +19,22 @@ pub struct Miner {
 
 impl Miner {
     pub fn new_ranged(block: Block, range: Range<u64>) -> Result<Self, String> {
-        let magic_len = block.magic.serialized_len();
+        let mut magic_len = block.magic.serialized_len();
         let block_len = block.serialized_len();
         let magic_start = block_len - magic_len;
         let mut my_serialized_block = vec![0u8; magic_start + 8];
         let mut tmp_magic_start = magic_start;
         block.serialize_into(&mut my_serialized_block, &mut 0)?;
-        TransactionVarUint::from(range.start as usize)
-            .serialize_into(&mut my_serialized_block, &mut tmp_magic_start)?;
-        println!("{:x?}", my_serialized_block[magic_start..].to_vec());
+        let var_uint: TransactionVarUint = TransactionVarUint::from(range.start as usize);
+        var_uint.serialize_into(&mut my_serialized_block, &mut tmp_magic_start)?;
+        magic_len = var_uint.value.len();
+        // println!(
+        //     "START: {:x?} {:x}",
+        //     &my_serialized_block[magic_start..magic_start + magic_len],
+        //     range.start
+        // );
+
+        //println!("{:x} - {:x}", range.start, range.end);
         Ok(Miner {
             my_serialized_block,
             i: range.start,
@@ -40,18 +47,23 @@ impl Miner {
     pub fn do_work(&mut self) -> Poll<Option<Block>> {
         let magic_end = self.magic_start + self.magic_len;
         let hash = Sha3_256::digest(&self.my_serialized_block[0..magic_end]);
-        if self.i < self.end && !BlockHash::contains_enough_work(&hash) {
+        if self.i <= self.end && !BlockHash::contains_enough_work(&hash) {
             self.magic_len = Magic::increase(
                 &mut self.my_serialized_block[self.magic_start..],
                 self.magic_len,
             );
             self.i += 1;
             Poll::Pending
-        } else if self.i < self.end {
+        } else if self.i <= self.end {
             let block =
                 *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
             Poll::Ready(Some(block))
         } else {
+            // println!(
+            //     "END:   {:x?} {:x}",
+            //     &self.my_serialized_block[self.magic_start..magic_end],
+            //     self.end
+            // );
             Poll::Ready(None)
         }
     }
