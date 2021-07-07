@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::task::Poll;
 
 pub const DEFAULT_N_THREADS: u64 = 0x2;
-pub const DEFAULT_PAR_WORK: u64 = 0x20000;
+pub const DEFAULT_PAR_WORK: u64 = 0x200000;
 
 pub struct BinaryWallet {
     pub blockchain_bin: Vec<u8>,
