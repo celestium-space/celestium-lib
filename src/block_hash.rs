@@ -14,7 +14,7 @@ impl BlockHash {
     }
 
     pub fn contains_enough_work(hash: &[u8]) -> bool {
-        hash[0] == 0 && hash[1] == 0 && hash[2] == 0
+        hash[0] == 0 && hash[1] == 0 && hash[2] == 0 && (hash[3] & 0xf0 == 0)
     }
 
     pub fn is_zero_block(&self) -> bool {
