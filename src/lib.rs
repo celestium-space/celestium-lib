@@ -17,6 +17,65 @@ pub mod wallet;
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        merkle_forest::MerkleForest, transaction::Transaction,
+        transaction_varuint::TransactionVarUint,
+    };
+    use secp256k1::PublicKey;
+
+    fn create_test_transaction(pk: PublicKey) -> (Transaction, MerkleForest<Transaction>) {
+        let t0 = crate::transaction::Transaction::new(
+            crate::transaction_version::TransactionVersion::default(),
+            vec![],
+            vec![crate::transaction_output::TransactionOutput::new(
+                crate::transaction_value::TransactionValue::new_coin_transfer(100, 0).unwrap(),
+                pk,
+            )],
+        );
+
+        let tis = vec![crate::transaction_input::TransactionInput::new(
+            t0.hash(),
+            TransactionVarUint::from(0),
+        )];
+
+        let mut merkle_forest = MerkleForest::new_empty();
+        merkle_forest.add_transactions(vec![t0]).unwrap();
+        let tos = vec![crate::transaction_output::TransactionOutput::new(
+            crate::transaction_value::TransactionValue::new_coin_transfer(100, 0).unwrap(),
+            pk,
+        )];
+        (
+            crate::transaction::Transaction::new(
+                crate::transaction_version::TransactionVersion::default(),
+                tis,
+                tos,
+            ),
+            merkle_forest,
+        )
+    }
+
+    #[test]
+    fn transaction_not_mined_verify() {
+        let (pk, _) = crate::wallet::Wallet::generate_ec_keys();
+        let (transaction, _) = create_test_transaction(pk);
+        assert!(!transaction.contains_enough_work());
+    }
+
+    #[test]
+    fn transaction_sign_verify() {
+        let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
+        let (mut transaction, merkle_forest) = create_test_transaction(pk);
+        transaction.sign(sk, 0).unwrap();
+        transaction.verify(merkle_forest).unwrap();
+    }
+
+    #[test]
+    fn transaction_no_sign_verify() {
+        let (pk, _) = crate::wallet::Wallet::generate_ec_keys();
+        let (mut transaction, merkle_forest) = create_test_transaction(pk);
+        assert!(transaction.verify(merkle_forest).is_err());
+    }
+
     #[test]
     fn var_uint_from_usize() {
         let var_uint = crate::transaction_varuint::TransactionVarUint::from(0x12345678);

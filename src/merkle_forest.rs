@@ -83,7 +83,6 @@ impl MerkleForest<Transaction> {
             .map(|x| x.hash())
             .collect::<Vec<[u8; HASH_SIZE]>>();
         let mut root = None;
-        println!("bq: {:x?}", branch_queue);
         while branch_queue.len() > 1 {
             let mut tmp_branch_queue = Vec::new();
             for leaf_pair in branch_queue.chunks(2) {

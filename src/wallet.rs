@@ -39,15 +39,16 @@ pub struct Wallet {
     blockchain: Blockchain,
     pk: Option<PublicKey>,
     sk: Option<SecretKey>,
-    blockchain_merkle_forest: MerkleForest<Transaction>,
+    pub blockchain_merkle_forest: MerkleForest<Transaction>,
     unspent_outputs: HashMap<([u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
     off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
-    thread_pool: Option<ThreadPool>,
+    thread_pool: ThreadPool,
+    is_block_miner: bool,
 }
 
 impl Wallet {
-    pub fn default(pk: PublicKey, sk: SecretKey) -> Self {
+    pub fn new(pk: PublicKey, sk: SecretKey, is_block_miner: bool) -> Self {
         Wallet {
             blockchain: Blockchain::new(Vec::new()),
             pk: Some(pk),
@@ -56,29 +57,15 @@ impl Wallet {
             unspent_outputs: HashMap::new(),
             root_lookup: HashMap::new(),
             off_chain_transactions: HashMap::new(),
-            thread_pool: None,
+            thread_pool: ThreadPoolBuilder::new()
+                .num_threads(DEFAULT_N_THREADS as usize)
+                .build()
+                .unwrap(),
+            is_block_miner,
         }
     }
 
-    pub fn default_miner(pk: PublicKey, sk: SecretKey) -> Self {
-        Wallet {
-            blockchain: Blockchain::new(Vec::new()),
-            pk: Some(pk),
-            sk: Some(sk),
-            blockchain_merkle_forest: MerkleForest::new_empty(),
-            unspent_outputs: HashMap::new(),
-            root_lookup: HashMap::new(),
-            off_chain_transactions: HashMap::new(),
-            thread_pool: Some(
-                ThreadPoolBuilder::new()
-                    .num_threads(DEFAULT_N_THREADS as usize)
-                    .build()
-                    .unwrap(),
-            ),
-        }
-    }
-
-    pub fn from_binary(binary_wallet: &BinaryWallet, is_miner: bool) -> Result<Self, String> {
+    pub fn from_binary(binary_wallet: &BinaryWallet, is_block_miner: bool) -> Result<Self, String> {
         let pk = *PublicKey::from_serialized(&binary_wallet.pk_bin, &mut 0)?;
         let blockchain = *Blockchain::from_serialized(&binary_wallet.blockchain_bin, &mut 0)?;
         let mut merkle_forest = MerkleForest::new_empty();
@@ -117,16 +104,10 @@ impl Wallet {
                 *Transaction::from_serialized(&binary_wallet.off_chain_transactions_bin, &mut i)?;
             off_chain_transactions.insert(transaction.hash(), transaction);
         }
-        let thread_pool = if is_miner {
-            Some(
-                ThreadPoolBuilder::new()
-                    .num_threads(DEFAULT_N_THREADS as usize)
-                    .build()
-                    .unwrap(),
-            )
-        } else {
-            None
-        };
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(DEFAULT_N_THREADS as usize)
+            .build()
+            .unwrap();
         Ok(Wallet {
             blockchain,
             pk: Some(pk),
@@ -136,6 +117,7 @@ impl Wallet {
             root_lookup,
             off_chain_transactions,
             thread_pool,
+            is_block_miner,
         })
     }
 
@@ -276,9 +258,15 @@ impl Wallet {
     }
 
     pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
-        self.off_chain_transactions
-            .insert(transaction.hash(), transaction);
-        Ok(())
+        transaction.verify(&self.blockchain_merkle_forest)?;
+        let transaction_hash = transaction.hash();
+        if transaction.contains_enough_work() {
+            self.off_chain_transactions
+                .insert(transaction_hash, transaction);
+            Ok(())
+        } else {
+            Err("Transaction does not contain enough work".to_string())
+        }
     }
 
     pub fn send_with_sk(
@@ -364,7 +352,7 @@ impl Wallet {
         block_hash: [u8; HASH_SIZE],
         merkle_root_hash: [u8; HASH_SIZE],
     ) -> Result<(), String> {
-        let new_branches = if self.thread_pool.is_some() {
+        let new_branches = if self.is_block_miner {
             let (mf, root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
             if root != merkle_root_hash {
                 return Err(format!("Creating merkle tree from transactions does not result in correct root, expected {:?} got {:?}", root, block_hash));
@@ -380,7 +368,7 @@ impl Wallet {
             let transaction_hash = transaction.hash();
             for (i, output) in transaction.outputs.iter().enumerate() {
                 let index = TransactionVarUint::from(i);
-                if self.thread_pool.is_some()
+                if self.is_block_miner
                     && !self
                         .unspent_outputs
                         .contains_key(&(transaction_hash, index.clone()))
@@ -490,7 +478,7 @@ impl Wallet {
     }
 
     pub fn get_serialized_blockchain(&self, n: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>), String> {
-        if self.thread_pool.is_some() {
+        if self.is_block_miner {
             let mut buffer = vec![0; self.blockchain.serialized_len()];
             let merkle_roots = self.blockchain.serialize_n_blocks(&mut buffer, &mut 0, n)?;
             let mut serialized_tree_leafs = Vec::new();
@@ -511,34 +499,44 @@ impl Wallet {
         }
     }
 
+    // pub fn mine_transaction(self, transaction: Transaction) -> Result<(), String> {
+    //     let mut i = 0;
+    //     self.thread_pool.install(|| loop {
+    //         let list: Vec<u64> = (0..DEFAULT_N_THREADS).collect();
+    //         match list.par_iter().find_map_any(|&j| {
+    //             let start = i + j * DEFAULT_PAR_WORK;
+    //             let end = i + (j + 1) * DEFAULT_PAR_WORK - 1;
+    //             let mut miner = Miner::new_ranged(block.clone(), start..end).unwrap();
+    //             while miner.do_work().is_pending() {}
+    //             match miner.do_work() {
+    //                 Poll::Ready(block) => block,
+    //                 Poll::Pending => None,
+    //             }
+    //         }) {
+    //             Some(r) => break Ok(()),
+    //             None => i += n_par_workers * par_work,
+    //         }
+    //     })
+    // }
+
     pub fn mine_block(&self, n_par_workers: u64, par_work: u64, block: Block) -> Option<Block> {
         let mut i = 0;
-        match &self.thread_pool {
-            Some(thread_pool) => thread_pool.install(|| loop {
-                let list: Vec<u64> = (0..n_par_workers).collect();
-                match list.par_iter().find_map_any(|&j| {
-                    let start = i + j * par_work;
-                    let end = i + (j + 1) * par_work - 1;
-                    let mut miner = Miner::new_ranged(block.clone(), start..end).unwrap();
-                    while miner.do_work().is_pending() {}
-                    match miner.do_work() {
-                        Poll::Ready(block) => block,
-                        Poll::Pending => None,
-                    }
-                }) {
-                    Some(r) => break Some(r),
-                    None => i += n_par_workers * par_work,
+        self.thread_pool.install(|| loop {
+            let list: Vec<u64> = (0..n_par_workers).collect();
+            match list.par_iter().find_map_any(|&j| {
+                let start = i + j * par_work;
+                let end = i + (j + 1) * par_work - 1;
+                let mut miner = Miner::new_ranged(block.clone(), start..end).unwrap();
+                while miner.do_work().is_pending() {}
+                match miner.do_work() {
+                    Poll::Ready(block) => block,
+                    Poll::Pending => None,
                 }
-            }),
-            None => {
-                let mut miner = Miner::new_ranged(block, 0..u64::MAX).unwrap();
-                loop {
-                    if let Poll::Ready(Some(b)) = miner.do_work() {
-                        break Some(b);
-                    }
-                }
+            }) {
+                Some(r) => break Some(r),
+                None => i += n_par_workers * par_work,
             }
-        }
+        })
     }
 
     pub fn generate_init_blockchain_unmined(block_count: u128) -> Result<Vec<Block>, String> {
@@ -590,7 +588,7 @@ impl Wallet {
         return Ok(blocks);
     }
 
-    pub fn generate_init_blockchain(is_miner: bool) -> Result<Wallet, String> {
+    pub fn generate_init_blockchain(is_block_miner: bool) -> Result<Wallet, String> {
         let (pk1, sk1) = Wallet::generate_ec_keys();
 
         let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
@@ -605,11 +603,7 @@ impl Wallet {
             ],
         );
 
-        let mut wallet = if is_miner {
-            Wallet::default_miner(pk1, sk1)
-        } else {
-            Wallet::default(pk1, sk1)
-        };
+        let mut wallet = Wallet::new(pk1, sk1, is_block_miner);
 
         wallet.add_off_chain_transaction(t0)?;
         let (block, transactions) = wallet.mining_data_from_off_chain_transactions().unwrap();

@@ -21,16 +21,6 @@ impl TransactionVarUint {
         value
     }
 
-    // pub fn get_value_from_le(&self) -> usize {
-    //     let mut value = 0usize;
-    //     let mut i = 0usize;
-    //     for byte in self.value.iter() {
-    //         value += ((byte & 0x7f) as usize) << i;
-    //         i += 7;
-    //     }
-    //     value
-    // }
-
     pub fn increase(&mut self) {
         let mut last_index = self.value.len() - 1;
         if self.value[last_index] < 0x7f {

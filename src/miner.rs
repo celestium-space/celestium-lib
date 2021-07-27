@@ -28,13 +28,6 @@ impl Miner {
         let var_uint: TransactionVarUint = TransactionVarUint::from(range.start as usize);
         var_uint.serialize_into(&mut my_serialized_block, &mut tmp_magic_start)?;
         magic_len = var_uint.value.len();
-        // println!(
-        //     "START: {:x?} {:x}",
-        //     &my_serialized_block[magic_start..magic_start + magic_len],
-        //     range.start
-        // );
-
-        //println!("{:x} - {:x}", range.start, range.end);
         Ok(Miner {
             my_serialized_block,
             i: range.start,
@@ -59,20 +52,7 @@ impl Miner {
                 *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
             Poll::Ready(Some(block))
         } else {
-            // println!(
-            //     "END:   {:x?} {:x}",
-            //     &self.my_serialized_block[self.magic_start..magic_end],
-            //     self.end
-            // );
             Poll::Ready(None)
         }
     }
 }
-
-// impl Future for Miner {
-//     fn poll(mut self: std::pin::Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Block>> {
-//         self.do_work()
-//     }
-
-//     type Output = Option<Block>;
-// }

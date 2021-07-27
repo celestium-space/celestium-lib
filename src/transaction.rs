@@ -1,5 +1,6 @@
 use crate::{
-    merkle_forest::HASH_SIZE,
+    block_hash::BlockHash,
+    merkle_forest::{MerkleForest, HASH_SIZE},
     serialize::{DynamicSized, Serialize},
     transaction_input::TransactionInput,
     transaction_output::TransactionOutput,
@@ -14,6 +15,7 @@ pub struct Transaction {
     version: TransactionVersion,
     pub inputs: Vec<TransactionInput>,
     pub outputs: Vec<TransactionOutput>,
+    pub magic: TransactionVarUint,
 }
 
 impl Transaction {
@@ -26,6 +28,7 @@ impl Transaction {
             version,
             inputs,
             outputs,
+            magic: TransactionVarUint::from(0),
         }
     }
 
@@ -81,13 +84,47 @@ impl Transaction {
             Some(_) => Err(format!("Input at index {} already signed", index)),
             None => {
                 let secp = Secp256k1::new();
-                let message =
-                    Message::from_slice(Sha3_256::digest(&self.get_sign_hash()).as_slice())
-                        .unwrap();
+                let message = Message::from_slice(&self.get_sign_hash()).unwrap();
                 self.inputs[index].signature = Some(secp.sign(&message, &sk));
                 Ok(true)
             }
         }
+    }
+
+    pub fn contains_enough_work(&self) -> bool {
+        let mut serialized_transaction = vec![0u8; self.serialized_len()];
+        match self.serialize_into(&mut serialized_transaction, &mut 0) {
+            Ok(_) => {
+                let hash = Sha3_256::digest(&serialized_transaction).to_vec();
+                BlockHash::contains_enough_work(&hash)
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn verify(&self, merkle_forest: &MerkleForest<Transaction>) -> Result<(), String> {
+        let secp = Secp256k1::new();
+        let trans_hash = Message::from_slice(&self.get_sign_hash()).unwrap();
+        for (i, input) in self.inputs.iter().enumerate() {
+            match input.signature {
+                Some(s) => match merkle_forest.get_transactions(vec![input.tx]) {
+                    Ok(tx) => {
+                        let pk = &tx[0].get_output(&input.index).pk;
+                        if let Err(e) = secp.verify(&trans_hash, &s, pk) {
+                            return Err(e.to_string());
+                        }
+                    }
+                    Err(_) => {
+                        return Err(format!(
+                            "Could not find input transaction '{:x?}' referenced by input",
+                            input.tx
+                        ))
+                    }
+                },
+                None => return Err(format!("Input {} has not been signed", i)),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -110,10 +147,12 @@ impl Serialize for Transaction {
         for _ in 0..num_of_outputs.get_value() {
             outputs.push(*TransactionOutput::from_serialized(&data, i)?);
         }
+        let magic = *TransactionVarUint::from_serialized(data, i)?;
         Ok(Box::new(Transaction {
             version,
             inputs,
             outputs,
+            magic,
         }))
     }
 
@@ -129,6 +168,7 @@ impl Serialize for Transaction {
         for output in self.outputs.iter() {
             output.serialize_into(&mut data, i)?;
         }
+        self.magic.serialize_into(data, i)?;
         Ok(())
     }
 }
@@ -146,5 +186,6 @@ impl DynamicSized for Transaction {
                 .outputs
                 .iter()
                 .fold(0usize, |sum, val| sum + val.serialized_len())
+            + self.magic.serialized_len()
     }
 }
