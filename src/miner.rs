@@ -10,7 +10,7 @@ use std::{ops::Range, task::Poll};
 
 #[derive(Clone)]
 pub struct Miner {
-    my_serialized_block: Vec<u8>,
+    data: Vec<u8>,
     i: u64,
     end: u64,
     pub magic_start: usize,
@@ -18,39 +18,40 @@ pub struct Miner {
 }
 
 impl Miner {
-    pub fn new_ranged(block: Block, range: Range<u64>) -> Result<Self, String> {
-        let mut magic_len = block.magic.serialized_len();
-        let block_len = block.serialized_len();
-        let magic_start = block_len - magic_len;
-        let mut my_serialized_block = vec![0u8; magic_start + 8];
-        let mut tmp_magic_start = magic_start;
-        block.serialize_into(&mut my_serialized_block, &mut 0)?;
+    pub fn new_ranged(data: Vec<u8>, range: Range<u64>) -> Result<Self, String> {
+        let mut data_with_magic = vec![0u8; data.len() + 8];
+        data_with_magic[0..data.len()].copy_from_slice(&data);
         let var_uint: TransactionVarUint = TransactionVarUint::from(range.start as usize);
-        var_uint.serialize_into(&mut my_serialized_block, &mut tmp_magic_start)?;
-        magic_len = var_uint.value.len();
+        var_uint.serialize_into(&mut data_with_magic, &mut data.len())?;
+        let magic_len = var_uint.value.len();
         Ok(Miner {
-            my_serialized_block,
+            data: data_with_magic,
             i: range.start,
             end: range.end,
-            magic_start,
+            magic_start: data.len(),
             magic_len,
         })
     }
 
-    pub fn do_work(&mut self) -> Poll<Option<Block>> {
+    pub fn from_block(block: Block, range: Range<u64>) -> Result<Self, String> {
+        let mut serialized_block = vec![0u8; block.serialized_len()];
+        block.serialize_into(&mut serialized_block, &mut 0)?;
+        Miner::new_ranged(
+            serialized_block[0..serialized_block.len() - block.magic.serialized_len()].to_vec(),
+            range,
+        )
+    }
+
+    pub fn do_work(&mut self) -> Poll<Option<Vec<u8>>> {
         let magic_end = self.magic_start + self.magic_len;
-        let hash = Sha3_256::digest(&self.my_serialized_block[0..magic_end]);
-        if self.i <= self.end && !BlockHash::contains_enough_work(&hash) {
-            self.magic_len = Magic::increase(
-                &mut self.my_serialized_block[self.magic_start..],
-                self.magic_len,
-            );
+        if self.i <= self.end
+            && !BlockHash::contains_enough_work(&Sha3_256::digest(&self.data[0..magic_end]))
+        {
+            self.magic_len = Magic::increase(&mut self.data[self.magic_start..], self.magic_len);
             self.i += 1;
             Poll::Pending
         } else if self.i <= self.end {
-            let block =
-                *Block::from_serialized(&self.my_serialized_block[0..magic_end], &mut 0).unwrap();
-            Poll::Ready(Some(block))
+            Poll::Ready(Some(self.data[0..magic_end].to_vec()))
         } else {
             Poll::Ready(None)
         }

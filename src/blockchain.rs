@@ -16,10 +16,7 @@ pub struct Blockchain {
 
 impl Blockchain {
     pub fn new(blocks: Vec<Block>) -> Blockchain {
-        let head = match blocks.last() {
-            Some(h) => Some(h.hash()),
-            None => None,
-        };
+        let head = blocks.last().map(|h| h.hash());
         Blockchain {
             blocks: blocks
                 .iter()
@@ -94,10 +91,7 @@ impl Blockchain {
     }
 
     pub fn get_head_hash(&self) -> [u8; 32] {
-        match self.head {
-            Some(h) => h,
-            None => [0u8; 32],
-        }
+        self.head.unwrap_or([0u8; 32])
     }
 
     pub fn add_block(&mut self, block: Block) -> Result<[u8; HASH_SIZE], String> {

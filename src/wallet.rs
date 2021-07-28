@@ -39,7 +39,7 @@ pub struct Wallet {
     blockchain: Blockchain,
     pk: Option<PublicKey>,
     sk: Option<SecretKey>,
-    pub blockchain_merkle_forest: MerkleForest<Transaction>,
+    blockchain_merkle_forest: MerkleForest<Transaction>,
     unspent_outputs: HashMap<([u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
     off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
@@ -63,6 +63,10 @@ impl Wallet {
                 .unwrap(),
             is_block_miner,
         }
+    }
+
+    pub fn sk(&self) -> Option<SecretKey> {
+        self.sk
     }
 
     pub fn from_binary(binary_wallet: &BinaryWallet, is_block_miner: bool) -> Result<Self, String> {
@@ -189,6 +193,10 @@ impl Wallet {
             value += transaction.get_total_fee();
         }
         Ok(value)
+    }
+
+    pub fn verify_transaction(&self, transaction: Transaction) -> Result<(), String> {
+        transaction.verify(&self.blockchain_merkle_forest)
     }
 
     pub fn get_balance(&self) -> Result<u128, String> {
@@ -499,44 +507,65 @@ impl Wallet {
         }
     }
 
-    // pub fn mine_transaction(self, transaction: Transaction) -> Result<(), String> {
-    //     let mut i = 0;
-    //     self.thread_pool.install(|| loop {
-    //         let list: Vec<u64> = (0..DEFAULT_N_THREADS).collect();
-    //         match list.par_iter().find_map_any(|&j| {
-    //             let start = i + j * DEFAULT_PAR_WORK;
-    //             let end = i + (j + 1) * DEFAULT_PAR_WORK - 1;
-    //             let mut miner = Miner::new_ranged(block.clone(), start..end).unwrap();
-    //             while miner.do_work().is_pending() {}
-    //             match miner.do_work() {
-    //                 Poll::Ready(block) => block,
-    //                 Poll::Pending => None,
-    //             }
-    //         }) {
-    //             Some(r) => break Ok(()),
-    //             None => i += n_par_workers * par_work,
-    //         }
-    //     })
-    // }
-
-    pub fn mine_block(&self, n_par_workers: u64, par_work: u64, block: Block) -> Option<Block> {
+    fn mine_data(
+        &self,
+        n_par_workers: u64,
+        par_work: u64,
+        serialized_data: &mut Vec<u8>,
+    ) -> Result<Vec<u8>, String> {
         let mut i = 0;
         self.thread_pool.install(|| loop {
             let list: Vec<u64> = (0..n_par_workers).collect();
             match list.par_iter().find_map_any(|&j| {
                 let start = i + j * par_work;
                 let end = i + (j + 1) * par_work - 1;
-                let mut miner = Miner::new_ranged(block.clone(), start..end).unwrap();
+                let mut miner = Miner::new_ranged(serialized_data.to_vec(), start..end).unwrap();
                 while miner.do_work().is_pending() {}
                 match miner.do_work() {
-                    Poll::Ready(block) => block,
+                    Poll::Ready(data) => data,
                     Poll::Pending => None,
                 }
             }) {
-                Some(r) => break Some(r),
+                Some(r) => break Ok(r),
                 None => i += n_par_workers * par_work,
             }
         })
+    }
+
+    pub fn mine_transaction(
+        &self,
+        n_par_workers: u64,
+        par_work: u64,
+        transaction: Transaction,
+    ) -> Result<Box<Transaction>, String> {
+        let mut serialized_transaction = vec![0u8; transaction.serialized_len()];
+        transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
+        let data = self.mine_data(
+            n_par_workers,
+            par_work,
+            &mut serialized_transaction
+                [0..serialized_transaction.len() - transaction.magic.serialized_len()]
+                .to_vec(),
+        )?;
+        Transaction::from_serialized(&data, &mut 0)
+    }
+
+    pub fn mine_block(
+        &self,
+        n_par_workers: u64,
+        par_work: u64,
+        block: Block,
+    ) -> Result<Box<Block>, String> {
+        let mut serialized_block = vec![0u8; block.serialized_len()];
+        block.serialize_into(&mut serialized_block, &mut 0)?;
+        self.mine_data(n_par_workers, par_work, &mut serialized_block)?;
+        let data = self.mine_data(
+            n_par_workers,
+            par_work,
+            &mut serialized_block[0..serialized_block.len() - block.magic.serialized_len()]
+                .to_vec(),
+        )?;
+        Block::from_serialized(&data, &mut 0)
     }
 
     pub fn generate_init_blockchain_unmined(block_count: u128) -> Result<Vec<Block>, String> {
@@ -584,8 +613,17 @@ impl Wallet {
                 TransactionVarUint::from(0),
             ));
         }
+        Ok(blocks)
+    }
 
-        return Ok(blocks);
+    pub fn create_and_mine_block_from_off_chain_transactions(&mut self) -> Result<(), String> {
+        let (block, transactions) = self.mining_data_from_off_chain_transactions().unwrap();
+        let done_block = *self.mine_block(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, block)?;
+        let block_hash = done_block.hash();
+        let merkle_root_hash = done_block.merkle_root.hash();
+        self.add_block(done_block)?;
+        self.add_on_chain_transactions(transactions, block_hash, merkle_root_hash)?;
+        Ok(())
     }
 
     pub fn generate_init_blockchain(is_block_miner: bool) -> Result<Wallet, String> {
@@ -594,39 +632,33 @@ impl Wallet {
         let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
         let mut data_hash = [0u8; HASH_SIZE];
         data_hash.copy_from_slice(&Sha3_256::digest(b"Hello, World!"));
-        let t0 = Transaction::new(
-            TransactionVersion::default(),
-            Vec::new(),
-            vec![
-                TransactionOutput::new(my_value, pk1),
-                TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
-            ],
-        );
-
         let mut wallet = Wallet::new(pk1, sk1, is_block_miner);
+        let t0 = *wallet.mine_transaction(
+            DEFAULT_N_THREADS,
+            DEFAULT_PAR_WORK,
+            Transaction::new(
+                TransactionVersion::default(),
+                Vec::new(),
+                vec![
+                    TransactionOutput::new(my_value, pk1),
+                    TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
+                ],
+            ),
+        )?;
 
         wallet.add_off_chain_transaction(t0)?;
-        let (block, transactions) = wallet.mining_data_from_off_chain_transactions().unwrap();
-        match wallet.mine_block(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, block) {
-            Some(done_block) => {
-                let block_hash = done_block.hash();
-                let merkle_root_hash = done_block.merkle_root.hash();
-                wallet.add_block(done_block)?;
-                wallet.add_on_chain_transactions(transactions, block_hash, merkle_root_hash)?;
-                Ok(wallet)
-            }
-            None => Err(String::from("Could not create block")),
-        }
+        wallet.create_and_mine_block_from_off_chain_transactions()?;
+        Ok(wallet)
     }
 
-    pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {
-        loop {
-            match miner.do_work() {
-                Poll::Ready(result) => return result,
-                Poll::Pending => {}
-            }
-        }
-    }
+    // pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {
+    //     loop {
+    //         match miner.do_work() {
+    //             Poll::Ready(result) => return result,
+    //             Poll::Pending => {}
+    //         }
+    //     }
+    // }
 
     pub fn generate_ec_keys() -> (PublicKey, SecretKey) {
         let secp = Secp256k1::new();
