@@ -18,28 +18,50 @@ pub mod wallet;
 #[cfg(test)]
 mod tests {
     use crate::{
-        merkle_forest::MerkleForest, transaction::Transaction,
+        block_hash::BlockHash,
+        ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
+        merkle_forest::HASH_SIZE,
+        serialize::DynamicSized,
+        transaction::{Transaction, SECP256K1_SIG_LEN},
+        transaction_input::TransactionInput,
+        transaction_output::TransactionOutput,
+        transaction_value::TransactionValue,
         transaction_varuint::TransactionVarUint,
+        transaction_version::TransactionVersion,
+        wallet::{self, Wallet},
     };
-    use secp256k1::PublicKey;
 
-    fn create_test_transaction(pk: PublicKey) -> (Transaction, MerkleForest<Transaction>) {
-        let t0 = crate::transaction::Transaction::new(
-            crate::transaction_version::TransactionVersion::default(),
-            vec![],
-            vec![crate::transaction_output::TransactionOutput::new(
-                crate::transaction_value::TransactionValue::new_coin_transfer(100, 0).unwrap(),
-                pk,
-            )],
-        );
+    fn create_test_set() -> (Transaction, Wallet) {
+        let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
+
+        let mut wallet = Wallet::new(pk, sk, true);
+        let t0 = *wallet
+            .mine_transaction(
+                wallet::DEFAULT_N_THREADS,
+                wallet::DEFAULT_PAR_WORK,
+                crate::transaction::Transaction::new(
+                    crate::transaction_version::TransactionVersion::default(),
+                    vec![],
+                    vec![crate::transaction_output::TransactionOutput::new(
+                        crate::transaction_value::TransactionValue::new_coin_transfer(100, 0)
+                            .unwrap(),
+                        pk,
+                    )],
+                ),
+            )
+            .unwrap();
+
+        let t0_hash = t0.hash();
+        wallet.add_off_chain_transaction(t0).unwrap();
+        wallet
+            .create_and_mine_block_from_off_chain_transactions()
+            .unwrap();
 
         let tis = vec![crate::transaction_input::TransactionInput::new(
-            t0.hash(),
+            wallet.get_head_hash(),
+            t0_hash,
             TransactionVarUint::from(0),
         )];
-
-        let mut merkle_forest = MerkleForest::new_empty();
-        merkle_forest.add_transactions(vec![t0]).unwrap();
         let tos = vec![crate::transaction_output::TransactionOutput::new(
             crate::transaction_value::TransactionValue::new_coin_transfer(100, 0).unwrap(),
             pk,
@@ -50,30 +72,54 @@ mod tests {
                 tis,
                 tos,
             ),
-            merkle_forest,
+            wallet,
         )
     }
 
     #[test]
-    fn transaction_not_mined_verify() {
-        let (pk, _) = crate::wallet::Wallet::generate_ec_keys();
-        let (transaction, _) = create_test_transaction(pk);
+    fn transaction_not_mined() {
+        let (transaction, _) = create_test_set();
         assert!(!transaction.contains_enough_work());
     }
 
     #[test]
-    fn transaction_sign_verify() {
-        let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
-        let (mut transaction, merkle_forest) = create_test_transaction(pk);
-        transaction.sign(sk, 0).unwrap();
-        transaction.verify(merkle_forest).unwrap();
+    fn transaction_valid_signature() {
+        let (mut transaction, wallet) = create_test_set();
+        transaction.sign(wallet.sk().unwrap(), 0).unwrap();
+        wallet.verify_transaction(transaction).unwrap();
     }
 
     #[test]
-    fn transaction_no_sign_verify() {
-        let (pk, _) = crate::wallet::Wallet::generate_ec_keys();
-        let (mut transaction, merkle_forest) = create_test_transaction(pk);
-        assert!(transaction.verify(merkle_forest).is_err());
+    fn transaction_invalid_signatrue() {
+        let (transaction, wallet) = create_test_set();
+        assert!(wallet.verify_transaction(transaction).is_err());
+    }
+
+    #[test]
+    fn transaction_serialized_len() {
+        let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
+        let mut transaction = Transaction::new(
+            TransactionVersion::default(),
+            vec![TransactionInput::new(
+                BlockHash::new_unworked().hash(),
+                BlockHash::new_unworked().hash(),
+                TransactionVarUint::from(0),
+            )],
+            vec![TransactionOutput::new(
+                TransactionValue::new_coin_transfer(0, 0).unwrap(),
+                pk,
+            )],
+        );
+        transaction.sign(sk, 0).unwrap();
+        let tver_len = 1;
+        let tinput_len = 1 + HASH_SIZE * 2 + 1;
+        let tout_len = 1 + 1 + 32 + PUBLIC_KEY_COMPRESSED_SIZE;
+        let sig_len = 1 + SECP256K1_SIG_LEN;
+        let magic_len = 1;
+        assert_eq!(
+            transaction.serialized_len(),
+            tver_len + tinput_len + tout_len + sig_len + magic_len
+        );
     }
 
     #[test]
@@ -116,24 +162,6 @@ mod tests {
         let len = var_uint.value.len();
         crate::magic::Magic::increase(&mut var_uint.value, len);
         assert_eq!(var_uint.get_value(), 0x1)
-    }
-
-    #[test]
-    fn magic_len_test() {
-        let var_uint = crate::transaction_varuint::TransactionVarUint::from(
-            crate::wallet::DEFAULT_PAR_WORK as usize,
-        );
-        let test_len = var_uint.value.len();
-        for i in 1..crate::wallet::DEFAULT_N_THREADS {
-            let var_uint = crate::transaction_varuint::TransactionVarUint::from(
-                (i * crate::wallet::DEFAULT_PAR_WORK) as usize,
-            );
-            assert_eq!(var_uint.value.len(), test_len)
-        }
-        let var_uint = crate::transaction_varuint::TransactionVarUint::from(
-            ((crate::wallet::DEFAULT_N_THREADS + 1) * crate::wallet::DEFAULT_PAR_WORK) as usize,
-        );
-        assert_eq!(var_uint.value.len(), test_len + 1)
     }
 
     #[test]
