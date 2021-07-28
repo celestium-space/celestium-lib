@@ -2,25 +2,28 @@ use crate::{
     serialize::{DynamicSized, Serialize},
     transaction_varuint::TransactionVarUint,
 };
-use secp256k1::Signature;
+
 use sha3::{Digest, Sha3_256};
 
-const SECP256K1_SIG_LEN: usize = 64;
 const HASH_SIZE: usize = 32;
 
 #[derive(Clone)]
 pub struct TransactionInput {
-    pub tx: [u8; HASH_SIZE],
+    pub block_hash: [u8; HASH_SIZE],
+    pub transaction_hash: [u8; HASH_SIZE],
     pub index: TransactionVarUint,
-    pub signature: Option<Signature>,
 }
 
 impl TransactionInput {
-    pub fn new(hash: [u8; HASH_SIZE], index: TransactionVarUint) -> Self {
+    pub fn new(
+        block_hash: [u8; HASH_SIZE],
+        transaction_hash: [u8; HASH_SIZE],
+        index: TransactionVarUint,
+    ) -> Self {
         TransactionInput {
-            tx: hash,
+            block_hash,
+            transaction_hash,
             index,
-            signature: None,
         }
     }
 
@@ -33,13 +36,13 @@ impl TransactionInput {
     }
 
     pub fn sign_hash(&self) -> [u8; HASH_SIZE] {
-        let mut hash = [0u8; HASH_SIZE];
         let mut self_serialized = vec![0u8; HASH_SIZE + self.index.serialized_len()];
-        self_serialized[0..HASH_SIZE].copy_from_slice(&self.tx);
-        let mut i = HASH_SIZE;
+        self_serialized[0..HASH_SIZE].copy_from_slice(&self.block_hash);
+        self_serialized[0..HASH_SIZE].copy_from_slice(&self.transaction_hash);
         self.index
-            .serialize_into(&mut self_serialized, &mut i)
+            .serialize_into(&mut self_serialized, &mut (HASH_SIZE * 2))
             .unwrap();
+        let mut hash = [0u8; HASH_SIZE];
         hash.copy_from_slice(Sha3_256::digest(&self_serialized).as_slice());
         hash
     }
@@ -47,27 +50,24 @@ impl TransactionInput {
 
 impl PartialEq for TransactionInput {
     fn eq(&self, other: &Self) -> bool {
-        self.tx == other.tx && self.index == other.index && self.signature == other.signature
+        self.transaction_hash == other.transaction_hash && self.index == other.index
     }
 }
 
 impl Serialize for TransactionInput {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
-        let mut tx = [0u8; HASH_SIZE];
-        tx.copy_from_slice(&data[*i..*i + HASH_SIZE]);
+        let mut block_hash = [0u8; HASH_SIZE];
+        block_hash.copy_from_slice(&data[*i..*i + HASH_SIZE]);
+        *i += HASH_SIZE;
+        let mut transaction_hash = [0u8; HASH_SIZE];
+        transaction_hash.copy_from_slice(&data[*i..*i + HASH_SIZE]);
         *i += HASH_SIZE;
         let index = *TransactionVarUint::from_serialized(data, i)?;
-        match Signature::from_compact(&data[*i..*i + SECP256K1_SIG_LEN]) {
-            Ok(signature) => {
-                *i += signature.serialize_compact().len();
-                Ok(Box::new(TransactionInput {
-                    tx,
-                    index,
-                    signature: Some(signature),
-                }))
-            }
-            Err(e) => Err(e.to_string()),
-        }
+        Ok(Box::new(TransactionInput {
+            block_hash,
+            transaction_hash,
+            index,
+        }))
     }
 
     fn serialize_into(&self, data: &mut [u8], i: &mut usize) -> Result<(), String> {
@@ -79,21 +79,17 @@ impl Serialize for TransactionInput {
                 bytes_left
             ));
         }
-        data[*i..*i + HASH_SIZE].copy_from_slice(&self.tx);
+        data[*i..*i + HASH_SIZE].copy_from_slice(&self.block_hash);
+        *i += HASH_SIZE;
+        data[*i..*i + HASH_SIZE].copy_from_slice(&self.transaction_hash);
         *i += HASH_SIZE;
         self.index.serialize_into(data, i)?;
-        let compact_signature = match self.signature {
-            Some(s) => s.serialize_compact(),
-            None => [0u8; SECP256K1_SIG_LEN],
-        };
-        data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
-        *i += compact_signature.len();
         Ok(())
     }
 }
 
 impl DynamicSized for TransactionInput {
     fn serialized_len(&self) -> usize {
-        HASH_SIZE + self.index.serialized_len() + SECP256K1_SIG_LEN
+        HASH_SIZE * 2 + self.index.serialized_len()
     }
 }
