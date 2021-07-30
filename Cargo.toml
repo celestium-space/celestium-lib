@@ -8,6 +8,9 @@ edition = "2018"
 name = "celestium"
 path = "src/lib.rs"
 
+[features]
+mining-ez-mode = []
+
 [dependencies]
 sha3 = "0.9"
 rayon = "1.5"
