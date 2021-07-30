@@ -68,6 +68,10 @@ impl Transaction {
         self.is_base_transaction() && self.outputs[0].value.is_coin_transfer()
     }
 
+    pub fn is_id_base_transaction(&self) -> bool {
+        self.is_base_transaction() && self.outputs[0].value.is_id_transfer()
+    }
+
     pub fn count_inputs(&self) -> usize {
         self.inputs.len()
     }
@@ -82,6 +86,14 @@ impl Transaction {
 
     pub fn get_inputs(&self) -> Vec<TransactionInput> {
         self.inputs.iter().map(|(t, _)| t.clone()).collect()
+    }
+
+    pub fn get_base_transaction_message(&self) -> Result<[u8; 64], String> {
+        if self.is_id_base_transaction() {
+            Ok(self.base_transaction_message.unwrap())
+        } else {
+            Err("Transaction is not ID base transaction".to_string())
+        }
     }
 
     pub fn magic_serialized_len(&self) -> usize {
