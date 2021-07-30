@@ -12,8 +12,8 @@ use crate::{
     transaction_output::TransactionOutput,
     transaction_value::TransactionValue,
     transaction_varuint::TransactionVarUint,
-    transaction_version::TransactionVersion,
 };
+use rand::rngs::ThreadRng;
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
@@ -49,8 +49,13 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    pub fn new(pk: PublicKey, sk: SecretKey, is_block_miner: bool) -> Self {
-        Wallet {
+    pub fn new_with_treadpool(
+        pk: PublicKey,
+        sk: SecretKey,
+        is_block_miner: bool,
+        thread_pool: ThreadPool,
+    ) -> Result<Self, String> {
+        Ok(Wallet {
             blockchain: Blockchain::new(Vec::new()),
             pk: Some(pk),
             sk: Some(sk),
@@ -58,16 +63,29 @@ impl Wallet {
             unspent_outputs: HashMap::new(),
             root_lookup: HashMap::new(),
             off_chain_transactions: HashMap::new(),
-            thread_pool: ThreadPoolBuilder::new()
+            thread_pool,
+            is_block_miner,
+        })
+    }
+
+    pub fn new(pk: PublicKey, sk: SecretKey, is_block_miner: bool) -> Result<Self, String> {
+        Wallet::new_with_treadpool(
+            pk,
+            sk,
+            is_block_miner,
+            ThreadPoolBuilder::new()
                 .num_threads(DEFAULT_N_THREADS as usize)
                 .build()
                 .unwrap(),
-            is_block_miner,
-        }
+        )
     }
 
     pub fn sk(&self) -> Option<SecretKey> {
         self.sk
+    }
+
+    pub fn pk(&self) -> Option<PublicKey> {
+        self.pk
     }
 
     pub fn from_binary(binary_wallet: &BinaryWallet, is_block_miner: bool) -> Result<Self, String> {
@@ -216,7 +234,7 @@ impl Wallet {
                     }
                 }
                 for transaction in self.off_chain_transactions.values() {
-                    for transaction_output in transaction.outputs.iter() {
+                    for transaction_output in transaction.get_outputs() {
                         if transaction_output.pk == pk
                             && transaction_output.value.is_coin_transfer()
                         {
@@ -230,6 +248,7 @@ impl Wallet {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn collect_for_coin_transfer(
         &self,
         value: &TransactionValue,
@@ -303,8 +322,8 @@ impl Wallet {
                     from_pk,
                 ));
             }
-            let mut transaction = Transaction::new(TransactionVersion::default(), inputs, outputs);
-            for i in 0..transaction.inputs.len() {
+            let mut transaction = Transaction::new(inputs, outputs)?;
+            for i in 0..transaction.count_inputs() {
                 transaction.sign(from_sk, i)?;
             }
             let transaction_len = transaction.serialized_len();
@@ -337,19 +356,9 @@ impl Wallet {
                     total_fee += transaction.get_total_fee();
                     transactions.push(transaction.clone());
                 }
-                transactions.push(Transaction::new(
-                    TransactionVersion::default(),
-                    Vec::new(),
-                    vec![
-                        TransactionOutput::new(
-                            TransactionValue::new_coin_transfer(total_fee, 0)?,
-                            pk,
-                        ),
-                        TransactionOutput::new(
-                            TransactionValue::new_id_transfer([0u8; HASH_SIZE])?,
-                            pk,
-                        ),
-                    ],
+                transactions.push(Transaction::new_coin_base_transaction(
+                    [0u8; 64],
+                    TransactionOutput::new(TransactionValue::new_coin_transfer(total_fee, 0)?, pk),
                 ));
                 let (_, merkle_root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
                 let back_hash =
@@ -387,7 +396,7 @@ impl Wallet {
         for transaction in transactions.iter() {
             self.off_chain_transactions.remove(&transaction.hash());
             let transaction_hash = transaction.hash();
-            for (i, output) in transaction.outputs.iter().enumerate() {
+            for (i, output) in transaction.get_outputs().iter().enumerate() {
                 let index = TransactionVarUint::from(i);
                 if self.is_block_miner
                     && !self.unspent_outputs.contains_key(&(
@@ -406,7 +415,7 @@ impl Wallet {
                     .insert((block_hash, transaction_hash, index), output.clone());
             }
             self.root_lookup.insert(transaction_hash, block_hash);
-            for input in transaction.inputs.iter() {
+            for input in transaction.get_inputs() {
                 spent_outputs.push((input.transaction_hash, input.index.get_value()));
             }
         }
@@ -500,6 +509,16 @@ impl Wallet {
             None => Err(String::from("Public key not initialized")),
         }
     }
+    pub fn get_sk(&self) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], String> {
+        match self.sk {
+            Some(sk) => {
+                let mut serialized_sk = [0u8; PUBLIC_KEY_COMPRESSED_SIZE];
+                sk.serialize_into(&mut serialized_sk, &mut 0)?;
+                Ok(serialized_sk)
+            }
+            None => Err(String::from("Public key not initialized")),
+        }
+    }
 
     pub fn get_serialized_blockchain(&self, n: usize) -> Result<(Vec<u8>, Vec<Vec<u8>>), String> {
         if self.is_block_miner {
@@ -560,7 +579,7 @@ impl Wallet {
             n_par_workers,
             par_work,
             &mut serialized_transaction
-                [0..serialized_transaction.len() - transaction.magic.serialized_len()]
+                [0..serialized_transaction.len() - transaction.magic_serialized_len()]
                 .to_vec(),
         )?;
         Transaction::from_serialized(&data, &mut 0)
@@ -593,13 +612,12 @@ impl Wallet {
         let mut data_hash = [0u8; HASH_SIZE];
         data_hash.copy_from_slice(&Sha3_256::digest(b"Hello, World!"));
         let prev_transaction = Transaction::new(
-            TransactionVersion::default(),
             Vec::new(),
             vec![
                 TransactionOutput::new(my_value, pk1),
                 TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
             ],
-        );
+        )?;
         let t0_hash = prev_transaction.hash();
 
         let mut prev_block = Block::new(
@@ -613,7 +631,6 @@ impl Wallet {
 
         for i in 1..block_count {
             let transaction = Transaction::new(
-                TransactionVersion::default(),
                 vec![TransactionInput::new(
                     prev_block_hash,
                     t0_hash,
@@ -626,7 +643,7 @@ impl Wallet {
                         pk1,
                     ),
                 ],
-            );
+            )?;
 
             prev_block = Block::new(
                 BlockVersion::default(),
@@ -641,7 +658,7 @@ impl Wallet {
     }
 
     pub fn create_and_mine_block_from_off_chain_transactions(&mut self) -> Result<(), String> {
-        let (block, transactions) = self.mining_data_from_off_chain_transactions().unwrap();
+        let (block, transactions) = self.mining_data_from_off_chain_transactions()?;
         let done_block = *self.mine_block(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, block)?;
         let block_hash = done_block.hash();
         let merkle_root_hash = done_block.merkle_root.hash();
@@ -654,19 +671,17 @@ impl Wallet {
         let (pk1, sk1) = Wallet::generate_ec_keys();
 
         let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
-        let mut data_hash = [0u8; HASH_SIZE];
-        data_hash.copy_from_slice(&Sha3_256::digest(b"Hello, World!"));
-        let mut wallet = Wallet::new(pk1, sk1, is_block_miner);
+
+        let mut wallet = Wallet::new(pk1, sk1, is_block_miner)?;
+        let message = b"Hello, World!";
+        let mut padded_message = [0u8; 64];
+        padded_message[0..13].copy_from_slice(message);
         let t0 = *wallet.mine_transaction(
             DEFAULT_N_THREADS,
             DEFAULT_PAR_WORK,
-            Transaction::new(
-                TransactionVersion::default(),
-                Vec::new(),
-                vec![
-                    TransactionOutput::new(my_value, pk1),
-                    TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
-                ],
+            Transaction::new_coin_base_transaction(
+                padded_message,
+                TransactionOutput::new(my_value, pk1),
             ),
         )?;
 
@@ -684,9 +699,15 @@ impl Wallet {
     //     }
     // }
 
+    pub fn generate_ec_keys_with_rng(rng: &mut ThreadRng) -> (PublicKey, SecretKey) {
+        let secp = Secp256k1::new();
+        let (sk, pk) = secp.generate_keypair(rng);
+        (pk, sk)
+    }
+
     pub fn generate_ec_keys() -> (PublicKey, SecretKey) {
         let secp = Secp256k1::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rngs::ThreadRng::default();
         let (sk, pk) = secp.generate_keypair(&mut rng);
         (pk, sk)
     }

@@ -212,6 +212,7 @@ impl MerkleForest<Transaction> {
         Ok(serialized)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn get_transactions(
         &self,
         hashes: Vec<[u8; 32]>,

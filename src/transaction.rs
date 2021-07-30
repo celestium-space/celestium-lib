@@ -4,10 +4,11 @@ use crate::{
     serialize::{DynamicSized, Serialize},
     transaction_input::TransactionInput,
     transaction_output::TransactionOutput,
+    transaction_value::TransactionValue,
     transaction_varuint::TransactionVarUint,
     transaction_version::TransactionVersion,
 };
-use secp256k1::{Message, Secp256k1, SecretKey, Signature};
+use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
 
 pub const SECP256K1_SIG_LEN: usize = 64;
@@ -15,30 +16,76 @@ pub const SECP256K1_SIG_LEN: usize = 64;
 #[derive(Clone)]
 pub struct Transaction {
     version: TransactionVersion,
-    pub inputs: Vec<TransactionInput>,
-    pub outputs: Vec<TransactionOutput>,
-    pub signatures: Vec<Option<Signature>>,
-    pub magic: TransactionVarUint,
+    base_transaction_message: Option<[u8; 64]>,
+    inputs: Vec<(TransactionInput, Option<Signature>)>,
+    outputs: Vec<TransactionOutput>,
+    magic: TransactionVarUint,
 }
 
 impl Transaction {
     pub fn new(
-        version: TransactionVersion,
         inputs: Vec<TransactionInput>,
         outputs: Vec<TransactionOutput>,
-    ) -> Self {
-        let signatures = vec![None; inputs.len()];
-        Transaction {
-            version,
-            inputs,
+    ) -> Result<Self, String> {
+        if inputs.is_empty() {
+            return Err("Normal transactions must have at least 1 input".to_string());
+        }
+        Ok(Transaction {
+            version: TransactionVersion::default(),
+            base_transaction_message: None,
+            inputs: inputs.into_iter().map(|input| (input, None)).collect(),
             outputs,
-            signatures,
+            magic: TransactionVarUint::from(0),
+        })
+    }
+
+    pub fn new_nft_base_transaction(nft: [u8; 64], pk: PublicKey) -> Self {
+        let mut hash = [0u8; HASH_SIZE];
+        hash.copy_from_slice(&Sha3_256::digest(&nft));
+        let transaction_output =
+            TransactionOutput::new(TransactionValue::new_id_transfer(hash).unwrap(), pk);
+        Transaction::new_coin_base_transaction(nft, transaction_output)
+    }
+
+    pub fn new_coin_base_transaction(
+        message: [u8; 64],
+        transaction_output: TransactionOutput,
+    ) -> Self {
+        Transaction {
+            version: TransactionVersion::default(),
+            base_transaction_message: Some(message),
+            inputs: vec![],
+            outputs: vec![transaction_output],
             magic: TransactionVarUint::from(0),
         }
     }
 
+    pub fn is_base_transaction(&self) -> bool {
+        self.inputs.is_empty() && self.outputs.len() == 1
+    }
+
+    pub fn is_coin_base_transaction(&self) -> bool {
+        self.is_base_transaction() && self.outputs[0].value.is_coin_transfer()
+    }
+
+    pub fn count_inputs(&self) -> usize {
+        self.inputs.len()
+    }
+
     pub fn get_output(&self, index: &TransactionVarUint) -> TransactionOutput {
         self.outputs[index.get_value()].clone()
+    }
+
+    pub fn get_outputs(&self) -> Vec<TransactionOutput> {
+        self.outputs.clone()
+    }
+
+    pub fn get_inputs(&self) -> Vec<TransactionInput> {
+        self.inputs.iter().map(|(t, _)| t.clone()).collect()
+    }
+
+    pub fn magic_serialized_len(&self) -> usize {
+        self.magic.serialized_len()
     }
 
     pub fn hash(&self) -> [u8; 32] {
@@ -64,7 +111,7 @@ impl Transaction {
             + TransactionVarUint::from(self.inputs.len()).serialized_len()
             + TransactionVarUint::from(self.outputs.len()).serialized_len();
         for input in &self.inputs {
-            digest_len += input.serialized_len();
+            digest_len += input.0.serialized_len();
         }
         for output in &self.outputs {
             digest_len += output.serialized_len();
@@ -75,7 +122,7 @@ impl Transaction {
         TransactionVarUint::from(self.inputs.len()).serialize_into(&mut digest, &mut i)?;
         TransactionVarUint::from(self.outputs.len()).serialize_into(&mut digest, &mut i)?;
         for input in &self.inputs {
-            input.serialize_into(&mut digest, &mut i)?;
+            input.0.serialize_into(&mut digest, &mut i)?;
         }
         for output in &self.outputs {
             output.serialize_into(&mut digest, &mut i)?;
@@ -93,12 +140,12 @@ impl Transaction {
                 last_index, index
             ));
         }
-        match self.signatures[index] {
+        match self.inputs[index].1 {
             Some(_) => Err(format!("Input at index {} already signed", index)),
             None => {
                 let secp = Secp256k1::new();
                 let message = Message::from_slice(&self.get_sign_hash()?).unwrap();
-                self.signatures[index] = Some(secp.sign(&message, &sk));
+                self.inputs[index].1 = Some(secp.sign(&message, &sk));
                 Ok(true)
             }
         }
@@ -128,37 +175,26 @@ impl Transaction {
     ) -> Result<(), String> {
         let secp = Secp256k1::new();
         let trans_hash = Message::from_slice(&self.get_sign_hash()?).unwrap();
-        if self.signatures.len() == self.inputs.len() {
-            for (i, input) in self.inputs.iter().enumerate() {
-                match self.signatures[i] {
-                    Some(s) => match merkle_forest.get_transactions(vec![input.transaction_hash]) {
-                        Ok(tx) => {
-                            let pk = &tx[0].get_output(&input.index).pk;
-                            if let Err(e) = secp.verify(&trans_hash, &s, pk) {
-                                return Err(format!(
-                                    "Could not verify signature: {}",
-                                    e.to_string()
-                                ));
-                            }
+        for (i, (input, signature)) in self.inputs.iter().enumerate() {
+            match signature {
+                Some(s) => match merkle_forest.get_transactions(vec![input.transaction_hash]) {
+                    Ok(tx) => {
+                        let pk = &tx[0].get_output(&input.index).pk;
+                        if let Err(e) = secp.verify(&trans_hash, &s, pk) {
+                            return Err(format!("Could not verify signature: {}", e.to_string()));
                         }
-                        Err(_) => {
-                            return Err(format!(
-                                "Could not find input transaction '{:x?}' referenced by input",
-                                input.transaction_hash
-                            ))
-                        }
-                    },
-                    None => {
-                        return Err(format!("Signature at index {} is not signed", i));
                     }
+                    Err(_) => {
+                        return Err(format!(
+                            "Could not find input transaction '{:x?}' referenced by input",
+                            input.transaction_hash
+                        ))
+                    }
+                },
+                None => {
+                    return Err(format!("Input at index {} is not signed", i));
                 }
             }
-        } else {
-            return Err(format!(
-                "Signature count ({}) does not match input count ({})",
-                self.signatures.len(),
-                self.inputs.len()
-            ));
         }
         Ok(())
     }
@@ -172,39 +208,51 @@ impl PartialEq for Transaction {
 
 impl Serialize for Transaction {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
-        let version = *TransactionVersion::from_serialized(&data, i)?;
+        let version = *TransactionVersion::from_serialized(data, i)?;
         let num_of_inputs = *TransactionVarUint::from_serialized(data, i)?;
+        let mut binary_nft = None;
         let mut inputs = Vec::new();
-        for _ in 0..num_of_inputs.get_value() {
-            inputs.push(*TransactionInput::from_serialized(&data, i)?);
+        if num_of_inputs.get_value() == 0 {
+            let mut binary_nft_data = [0u8; 64];
+            binary_nft_data.copy_from_slice(&data[*i..*i + 64]);
+            binary_nft = Some(binary_nft_data);
+            *i += 64;
+        } else {
+            for _ in 0..num_of_inputs.get_value() {
+                inputs.push((
+                    *TransactionInput::from_serialized(&data, i)?,
+                    match Signature::from_compact(&data[*i..*i + SECP256K1_SIG_LEN]) {
+                        Ok(signature) => {
+                            *i += signature.serialize_compact().len();
+                            Some(signature)
+                        }
+                        Err(e) => {
+                            return Err(format!(
+                                "Could not load serialized signature: {}",
+                                e.to_string()
+                            ))
+                        }
+                    },
+                ));
+            }
         }
         let num_of_outputs = *TransactionVarUint::from_serialized(data, i)?;
+        if num_of_inputs.get_value() == 0 && num_of_outputs.get_value() != 1 {
+            return Err(format!(
+                "Encountered base transaction with {} outputs, must be exactly 1",
+                num_of_outputs.get_value()
+            ));
+        }
         let mut outputs = Vec::new();
         for _ in 0..num_of_outputs.get_value() {
             outputs.push(*TransactionOutput::from_serialized(&data, i)?);
         }
-        let num_of_signatures = *TransactionVarUint::from_serialized(data, i)?;
-        let mut signatures = Vec::new();
-        for _ in 0..num_of_signatures.get_value() {
-            match Signature::from_compact(&data[*i..*i + SECP256K1_SIG_LEN]) {
-                Ok(signature) => {
-                    *i += signature.serialize_compact().len();
-                    signatures.push(Some(signature));
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "Could not load serialized signature: {}",
-                        e.to_string()
-                    ))
-                }
-            }
-        }
         let magic = *TransactionVarUint::from_serialized(data, i)?;
         Ok(Box::new(Transaction {
             version,
+            base_transaction_message: binary_nft,
             inputs,
             outputs,
-            signatures,
             magic,
         }))
     }
@@ -212,28 +260,30 @@ impl Serialize for Transaction {
     fn serialize_into(&self, mut data: &mut [u8], i: &mut usize) -> Result<(), String> {
         self.version.serialize_into(&mut data, i)?;
         TransactionVarUint::from(self.inputs.len()).serialize_into(data, i)?;
-        for input in self.inputs.iter() {
-            input.serialize_into(&mut data, i)?;
+        match self.base_transaction_message {
+            Some(message) => {
+                data[*i..*i + 64].copy_from_slice(&message);
+                *i += 64;
+            }
+            None => {
+                for (index, (input, signature)) in self.inputs.iter().enumerate() {
+                    match signature {
+                        Some(s) => {
+                            input.serialize_into(&mut data, i)?;
+                            let compact_signature = s.serialize_compact();
+                            data[*i..*i + compact_signature.len()]
+                                .copy_from_slice(&compact_signature);
+                            *i += compact_signature.len();
+                        }
+                        None => return Err(format!("Input at index {} not yet signed", index)),
+                    }
+                }
+            }
         }
+
         TransactionVarUint::from(self.outputs.len()).serialize_into(data, i)?;
         for output in self.outputs.iter() {
             output.serialize_into(&mut data, i)?;
-        }
-        TransactionVarUint::from(self.signatures.len()).serialize_into(data, i)?;
-        for (index, signature) in self.signatures.iter().enumerate() {
-            match signature {
-                Some(s) => {
-                    let compact_signature = s.serialize_compact();
-                    data[*i..*i + compact_signature.len()].copy_from_slice(&compact_signature);
-                    *i += compact_signature.len();
-                }
-                None => {
-                    return Err(format!(
-                        "Transaction input at index {} not yet signed",
-                        index
-                    ))
-                }
-            }
         }
         self.magic.serialize_into(data, i)?;
         Ok(())
@@ -242,19 +292,21 @@ impl Serialize for Transaction {
 
 impl DynamicSized for Transaction {
     fn serialized_len(&self) -> usize {
+        let input_len = if self.is_base_transaction() {
+            64
+        } else {
+            self.inputs.iter().fold(0usize, |sum, (input, _)| {
+                sum + input.serialized_len() + SECP256K1_SIG_LEN
+            })
+        };
         self.version.serialized_len()
             + TransactionVarUint::from(self.inputs.len()).serialized_len()
             + TransactionVarUint::from(self.outputs.len()).serialized_len()
-            + TransactionVarUint::from(self.signatures.len()).serialized_len()
-            + self
-                .inputs
-                .iter()
-                .fold(0usize, |sum, val| sum + val.serialized_len())
+            + input_len
             + self
                 .outputs
                 .iter()
                 .fold(0usize, |sum, val| sum + val.serialized_len())
-            + self.signatures.len() * SECP256K1_SIG_LEN
             + self.magic.serialized_len()
     }
 }
