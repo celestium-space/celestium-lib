@@ -1,8 +1,12 @@
 use crate::serialize::{Serialize, StaticSized};
 use std::fmt::{self, Display, Formatter};
-use std::env;
+use std::option_env;
 
 const BLOCK_HASH_SIZE: usize = 32;
+
+// make proof-of-work easier if this env var is set at compile time
+// really only useful for development and testing
+const EZ_MODE: bool = option_env!("CELESTIUM_EZ_MODE").is_some();
 
 #[derive(Clone)]
 pub struct BlockHash {
@@ -15,9 +19,7 @@ impl BlockHash {
     }
 
     pub fn contains_enough_work(hash: &[u8]) -> bool {
-        if env::var("CELESTIUM_EZ_MODE").is_ok() {
-            // make proof-of-work easier if this env var is set
-            // very useful for testing
+        if EZ_MODE {
             hash[0] == 0 && hash[1] == 0
         } else {
             hash[0] == 0 && hash[1] == 0 && hash[2] == 0 && (hash[3] & 0xf0 == 0)
