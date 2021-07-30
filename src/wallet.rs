@@ -499,23 +499,16 @@ impl Wallet {
         Ok(())
     }
 
-    pub fn get_pk(&self) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], String> {
+    pub fn get_pk(&self) -> Result<PublicKey, String> {
         match self.pk {
-            Some(pk) => {
-                let mut serialized_pk = [0u8; PUBLIC_KEY_COMPRESSED_SIZE];
-                pk.serialize_into(&mut serialized_pk, &mut 0)?;
-                Ok(serialized_pk)
-            }
+            Some(pk) => Ok(pk),
             None => Err(String::from("Public key not initialized")),
         }
     }
-    pub fn get_sk(&self) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], String> {
+
+    pub fn get_sk(&self) -> Result<SecretKey, String> {
         match self.sk {
-            Some(sk) => {
-                let mut serialized_sk = [0u8; PUBLIC_KEY_COMPRESSED_SIZE];
-                sk.serialize_into(&mut serialized_sk, &mut 0)?;
-                Ok(serialized_sk)
-            }
+            Some(sk) => Ok(sk),
             None => Err(String::from("Public key not initialized")),
         }
     }
