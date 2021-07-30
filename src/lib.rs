@@ -27,26 +27,24 @@ mod tests {
         transaction_output::TransactionOutput,
         transaction_value::TransactionValue,
         transaction_varuint::TransactionVarUint,
-        transaction_version::TransactionVersion,
         wallet::{self, Wallet},
     };
 
     fn create_test_set() -> (Transaction, Wallet) {
         let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
 
-        let mut wallet = Wallet::new(pk, sk, true);
+        let mut wallet = Wallet::new(pk, sk, true).unwrap();
         let t0 = *wallet
             .mine_transaction(
                 wallet::DEFAULT_N_THREADS,
                 wallet::DEFAULT_PAR_WORK,
-                crate::transaction::Transaction::new(
-                    crate::transaction_version::TransactionVersion::default(),
-                    vec![],
-                    vec![crate::transaction_output::TransactionOutput::new(
+                crate::transaction::Transaction::new_coin_base_transaction(
+                    [0u8; 64],
+                    crate::transaction_output::TransactionOutput::new(
                         crate::transaction_value::TransactionValue::new_coin_transfer(100, 0)
                             .unwrap(),
                         pk,
-                    )],
+                    ),
                 ),
             )
             .unwrap();
@@ -67,11 +65,7 @@ mod tests {
             pk,
         )];
         (
-            crate::transaction::Transaction::new(
-                crate::transaction_version::TransactionVersion::default(),
-                tis,
-                tos,
-            ),
+            crate::transaction::Transaction::new(tis, tos).unwrap(),
             wallet,
         )
     }
@@ -99,7 +93,6 @@ mod tests {
     fn transaction_serialized_len() {
         let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
         let mut transaction = Transaction::new(
-            TransactionVersion::default(),
             vec![TransactionInput::new(
                 BlockHash::new_unworked().hash(),
                 BlockHash::new_unworked().hash(),
@@ -109,16 +102,16 @@ mod tests {
                 TransactionValue::new_coin_transfer(0, 0).unwrap(),
                 pk,
             )],
-        );
+        )
+        .unwrap();
         transaction.sign(sk, 0).unwrap();
         let tver_len = 1;
-        let tinput_len = 1 + HASH_SIZE * 2 + 1;
+        let tinput_len = 1 + HASH_SIZE * 2 + 1 + SECP256K1_SIG_LEN;
         let tout_len = 1 + 1 + 32 + PUBLIC_KEY_COMPRESSED_SIZE;
-        let sig_len = 1 + SECP256K1_SIG_LEN;
         let magic_len = 1;
         assert_eq!(
             transaction.serialized_len(),
-            tver_len + tinput_len + tout_len + sig_len + magic_len
+            tver_len + tinput_len + tout_len + magic_len
         );
     }
 
