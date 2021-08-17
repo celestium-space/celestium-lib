@@ -34,7 +34,7 @@ impl Blockchain {
             if block.back_hash.hash().to_vec() == hash {
                 let block_len = block.serialized_len();
                 hash = Sha3_256::digest(&data[*i - block_len..*i]).to_vec();
-                if BlockHash::contains_enough_work(&hash) {
+                if !BlockHash::contains_enough_work(&hash) {
                     return Err(format!(
                         "Blockchain - Block with len {} at byte {} with magic {}, hashes to {:x?}, which does not represent enough work",
                         block_len, *i - block_len, block.magic, hash

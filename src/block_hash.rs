@@ -1,6 +1,5 @@
 use crate::serialize::{Serialize, StaticSized};
 use std::fmt::{self, Display, Formatter};
-use std::option_env;
 
 const BLOCK_HASH_SIZE: usize = 32;
 

@@ -3,7 +3,6 @@ use crate::{
     block_hash::BlockHash,
     block_version::BlockVersion,
     blockchain::Blockchain,
-    ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
     merkle_forest::{MerkleForest, Node, HASH_SIZE},
     miner::Miner,
     serialize::{DynamicSized, Serialize, StaticSized},
