@@ -12,11 +12,12 @@ use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
 
 pub const SECP256K1_SIG_LEN: usize = 64;
+pub const BASE_TRANSACTION_MESSAGE_LEN: usize = 65;
 
 #[derive(Clone)]
 pub struct Transaction {
     version: TransactionVersion,
-    base_transaction_message: Option<[u8; 64]>,
+    base_transaction_message: Option<[u8; BASE_TRANSACTION_MESSAGE_LEN]>,
     inputs: Vec<(TransactionInput, Option<Signature>)>,
     outputs: Vec<TransactionOutput>,
     magic: TransactionVarUint,
@@ -39,7 +40,10 @@ impl Transaction {
         })
     }
 
-    pub fn new_nft_base_transaction(nft: [u8; 64], pk: PublicKey) -> Self {
+    pub fn new_nft_base_transaction(
+        nft: [u8; BASE_TRANSACTION_MESSAGE_LEN],
+        pk: PublicKey,
+    ) -> Self {
         let mut hash = [0u8; HASH_SIZE];
         hash.copy_from_slice(&Sha3_256::digest(&nft));
         let transaction_output =
@@ -48,7 +52,7 @@ impl Transaction {
     }
 
     pub fn new_coin_base_transaction(
-        message: [u8; 64],
+        message: [u8; BASE_TRANSACTION_MESSAGE_LEN],
         transaction_output: TransactionOutput,
     ) -> Self {
         Transaction {
@@ -88,7 +92,9 @@ impl Transaction {
         self.inputs.iter().map(|(t, _)| t.clone()).collect()
     }
 
-    pub fn get_base_transaction_message(&self) -> Result<[u8; 64], String> {
+    pub fn get_base_transaction_message(
+        &self,
+    ) -> Result<[u8; BASE_TRANSACTION_MESSAGE_LEN], String> {
         if self.is_id_base_transaction() {
             Ok(self.base_transaction_message.unwrap())
         } else {
@@ -225,10 +231,10 @@ impl Serialize for Transaction {
         let mut binary_nft = None;
         let mut inputs = Vec::new();
         if num_of_inputs.get_value() == 0 {
-            let mut binary_nft_data = [0u8; 64];
-            binary_nft_data.copy_from_slice(&data[*i..*i + 64]);
+            let mut binary_nft_data = [0u8; BASE_TRANSACTION_MESSAGE_LEN];
+            binary_nft_data.copy_from_slice(&data[*i..*i + BASE_TRANSACTION_MESSAGE_LEN]);
             binary_nft = Some(binary_nft_data);
-            *i += 64;
+            *i += BASE_TRANSACTION_MESSAGE_LEN;
         } else {
             for _ in 0..num_of_inputs.get_value() {
                 inputs.push((
@@ -274,8 +280,8 @@ impl Serialize for Transaction {
         TransactionVarUint::from(self.inputs.len()).serialize_into(data, i)?;
         match self.base_transaction_message {
             Some(message) => {
-                data[*i..*i + 64].copy_from_slice(&message);
-                *i += 64;
+                data[*i..*i + BASE_TRANSACTION_MESSAGE_LEN].copy_from_slice(&message);
+                *i += BASE_TRANSACTION_MESSAGE_LEN;
             }
             None => {
                 for (index, (input, signature)) in self.inputs.iter().enumerate() {
@@ -305,7 +311,7 @@ impl Serialize for Transaction {
 impl DynamicSized for Transaction {
     fn serialized_len(&self) -> usize {
         let input_len = if self.is_base_transaction() {
-            64
+            BASE_TRANSACTION_MESSAGE_LEN
         } else {
             self.inputs.iter().fold(0usize, |sum, (input, _)| {
                 sum + input.serialized_len() + SECP256K1_SIG_LEN

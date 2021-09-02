@@ -6,7 +6,7 @@ use crate::{
     merkle_forest::{MerkleForest, Node, HASH_SIZE},
     miner::Miner,
     serialize::{DynamicSized, Serialize, StaticSized},
-    transaction::Transaction,
+    transaction::{self, Transaction},
     transaction_input::TransactionInput,
     transaction_output::TransactionOutput,
     transaction_value::TransactionValue,
@@ -356,7 +356,7 @@ impl Wallet {
                     transactions.push(transaction.clone());
                 }
                 transactions.push(Transaction::new_coin_base_transaction(
-                    [0u8; 64],
+                    [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN],
                     TransactionOutput::new(TransactionValue::new_coin_transfer(total_fee, 0)?, pk),
                 ));
                 let (_, merkle_root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
@@ -666,7 +666,7 @@ impl Wallet {
 
         let mut wallet = Wallet::new(pk1, sk1, is_block_miner)?;
         let message = b"Hello, World!";
-        let mut padded_message = [0u8; 64];
+        let mut padded_message = [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN];
         padded_message[0..13].copy_from_slice(message);
         let t0 = *wallet.mine_transaction(
             DEFAULT_N_THREADS,
