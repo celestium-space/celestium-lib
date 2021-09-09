@@ -108,8 +108,16 @@ impl Serialize for TransactionVarUint {
         let pre_i = *i;
         while data[*i] > 0x7f {
             *i += 1;
+            if *i >= data.len() {
+                return Err(format!(
+                    "VarUint {:x?} does not end before input data.",
+                    data.to_vec()[pre_i..].to_vec()
+                ));
+            }
         }
+
         *i += 1;
+
         let mut value = vec![0u8; *i - pre_i];
         value.copy_from_slice(&data[pre_i..*i]);
         Ok(Box::new(TransactionVarUint { value }))
