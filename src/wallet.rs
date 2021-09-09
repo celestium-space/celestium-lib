@@ -294,6 +294,17 @@ impl Wallet {
 
     pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
         transaction.verify_signatures(&self.blockchain_merkle_forest)?;
+        if transaction.is_base_transaction() {
+            let base_transaction_input_block_hash = transaction.get_inputs()[0].block_hash;
+            let current_blockchain_head_hash = self.get_head_hash();
+            if base_transaction_input_block_hash != current_blockchain_head_hash {
+                return Err(format!(
+                    "Base transaction input block hash {:x?} does not match head block hash {:x?}",
+                    base_transaction_input_block_hash, current_blockchain_head_hash
+                ));
+            }
+        }
+
         let transaction_hash = transaction.hash();
         if transaction.contains_enough_work() {
             self.off_chain_transactions
@@ -356,6 +367,7 @@ impl Wallet {
                     transactions.push(transaction.clone());
                 }
                 transactions.push(Transaction::new_coin_base_transaction(
+                    self.get_head_hash(),
                     [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN],
                     TransactionOutput::new(TransactionValue::new_coin_transfer(total_fee, 0)?, pk),
                 ));
@@ -668,14 +680,12 @@ impl Wallet {
         let message = b"Hello, World!";
         let mut padded_message = [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN];
         padded_message[0..13].copy_from_slice(message);
-        let t0 = *wallet.mine_transaction(
-            DEFAULT_N_THREADS,
-            DEFAULT_PAR_WORK,
-            Transaction::new_coin_base_transaction(
-                padded_message,
-                TransactionOutput::new(my_value, pk1),
-            ),
-        )?;
+        let mut t0 = Transaction::new_coin_base_transaction(
+            [0u8; 32],
+            padded_message,
+            TransactionOutput::new(my_value, pk1),
+        );
+        t0 = *wallet.mine_transaction(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, t0)?;
 
         wallet.add_off_chain_transaction(t0)?;
         wallet.create_and_mine_block_from_off_chain_transactions()?;
