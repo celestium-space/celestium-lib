@@ -6,7 +6,7 @@ use crate::{
     merkle_forest::{MerkleForest, Node, HASH_SIZE},
     miner::Miner,
     serialize::{DynamicSized, Serialize, StaticSized},
-    transaction::{self, Transaction},
+    transaction::{self, Transaction, BASE_TRANSACTION_MESSAGE_LEN},
     transaction_input::TransactionInput,
     transaction_output::TransactionOutput,
     transaction_value::TransactionValue,
@@ -608,20 +608,21 @@ impl Wallet {
     }
 
     pub fn generate_init_blockchain_unmined(block_count: u128) -> Result<Vec<Block>, String> {
-        let (pk1, _) = Wallet::generate_ec_keys();
+        let (pk1, sk1) = Wallet::generate_ec_keys();
         let (pk2, _) = Wallet::generate_ec_keys();
 
         let pk1_balance = 10000;
         let my_value = TransactionValue::new_coin_transfer(pk1_balance, 0)?;
+        let t0_data = b"Hello, World!";
+        let mut t0_data_padded = [0u8; BASE_TRANSACTION_MESSAGE_LEN];
+        t0_data_padded[..t0_data.len()].copy_from_slice(t0_data);
         let mut data_hash = [0u8; HASH_SIZE];
-        data_hash.copy_from_slice(&Sha3_256::digest(b"Hello, World!"));
-        let prev_transaction = Transaction::new(
-            Vec::new(),
-            vec![
-                TransactionOutput::new(my_value, pk1),
-                TransactionOutput::new(TransactionValue::new_id_transfer(data_hash)?, pk1),
-            ],
-        )?;
+        data_hash.copy_from_slice(&Sha3_256::digest(t0_data));
+        let prev_transaction = Transaction::new_coin_base_transaction(
+            [0u8; HASH_SIZE],
+            t0_data_padded,
+            TransactionOutput::new(my_value, pk1),
+        );
         let t0_hash = prev_transaction.hash();
 
         let mut prev_block = Block::new(
@@ -634,7 +635,7 @@ impl Wallet {
         let mut blocks = vec![prev_block];
 
         for i in 1..block_count {
-            let transaction = Transaction::new(
+            let mut transaction = Transaction::new(
                 vec![TransactionInput::new(
                     prev_block_hash,
                     t0_hash,
@@ -648,6 +649,8 @@ impl Wallet {
                     ),
                 ],
             )?;
+
+            transaction.sign(sk1, 0)?;
 
             prev_block = Block::new(
                 BlockVersion::default(),
