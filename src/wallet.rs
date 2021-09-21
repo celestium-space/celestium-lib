@@ -30,6 +30,7 @@ pub struct BinaryWallet {
     pub mf_branches_bin: Vec<u8>,
     pub mf_leafs_bin: Vec<u8>,
     pub unspent_outputs_bin: Vec<u8>,
+    pub nft_lookups_bin: Vec<u8>,
     pub root_lookup_bin: Vec<u8>,
     pub off_chain_transactions_bin: Vec<u8>,
 }
@@ -41,6 +42,7 @@ pub struct Wallet {
     blockchain_merkle_forest: MerkleForest<Transaction>,
     unspent_outputs:
         HashMap<([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
+    nft_lookups: HashMap<[u8; HASH_SIZE], ([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint)>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
     off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
     thread_pool: ThreadPool,
@@ -60,6 +62,7 @@ impl Wallet {
             sk: Some(sk),
             blockchain_merkle_forest: MerkleForest::new_empty(),
             unspent_outputs: HashMap::new(),
+            nft_lookups: HashMap::new(),
             root_lookup: HashMap::new(),
             off_chain_transactions: HashMap::new(),
             thread_pool,
@@ -98,6 +101,7 @@ impl Wallet {
         while i < binary_wallet.unspent_outputs_bin.len() {
             let mut block_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
             block_hash.copy_from_slice(&binary_wallet.unspent_outputs_bin[i..i + HASH_SIZE]);
+            i += HASH_SIZE;
             let mut transaction_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
             transaction_hash.copy_from_slice(&binary_wallet.unspent_outputs_bin[i..i + HASH_SIZE]);
             i += HASH_SIZE;
@@ -113,6 +117,29 @@ impl Wallet {
                 *TransactionOutput::from_serialized(&binary_wallet.unspent_outputs_bin, &mut i)?,
             );
         }
+
+        let mut i = 0;
+        let mut nft_lookup = HashMap::new();
+        while i < binary_wallet.nft_lookups_bin.len() {
+            let mut nft_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+            nft_hash.copy_from_slice(&binary_wallet.nft_lookups_bin[i..i + HASH_SIZE]);
+            i += HASH_SIZE;
+            let mut block_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+            block_hash.copy_from_slice(&binary_wallet.nft_lookups_bin[i..i + HASH_SIZE]);
+            i += HASH_SIZE;
+            let mut transaction_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+            transaction_hash.copy_from_slice(&binary_wallet.nft_lookups_bin[i..i + HASH_SIZE]);
+            i += HASH_SIZE;
+            nft_lookup.insert(
+                nft_hash,
+                (
+                    block_hash,
+                    transaction_hash,
+                    *TransactionVarUint::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?,
+                ),
+            );
+        }
+
         let mut root_lookup: HashMap<[u8; 32], [u8; 32]> = HashMap::new();
         for chunk in binary_wallet.root_lookup_bin.chunks(HASH_SIZE * 2) {
             let mut k = [0u8; 32];
@@ -139,6 +166,7 @@ impl Wallet {
             sk: Some(*SecretKey::from_serialized(&binary_wallet.sk_bin, &mut 0)?),
             blockchain_merkle_forest: merkle_forest,
             unspent_outputs,
+            nft_lookups: nft_lookup,
             root_lookup,
             off_chain_transactions,
             thread_pool,
@@ -158,6 +186,7 @@ impl Wallet {
                 sk.serialize_into(&mut sk_bin, &mut 0)?;
                 let mf_branches_bin = self.blockchain_merkle_forest.serialize_all_nodes()?;
                 let mf_leafs_bin = self.blockchain_merkle_forest.serialize_all_transactions()?;
+
                 let mut unspent_outputs_bin = Vec::new();
                 for unspent_output in self.unspent_outputs.iter() {
                     let ((block_hash, transaction_hash, index), output) = unspent_output;
@@ -168,13 +197,35 @@ impl Wallet {
                             + index.serialized_len()
                             + output.serialized_len()
                     ];
-                    unspent_output_bin[0..HASH_SIZE].copy_from_slice(block_hash);
-                    let mut i = HASH_SIZE;
-                    unspent_output_bin[0..HASH_SIZE].copy_from_slice(transaction_hash);
+                    let mut i = 0;
+                    unspent_output_bin[0..i + HASH_SIZE].copy_from_slice(block_hash);
+                    i += HASH_SIZE;
+                    unspent_output_bin[0..i + HASH_SIZE].copy_from_slice(transaction_hash);
                     i += HASH_SIZE;
                     index.serialize_into(&mut unspent_output_bin, &mut i)?;
                     output.serialize_into(&mut unspent_output_bin, &mut i)?;
                     unspent_outputs_bin.append(&mut unspent_output_bin);
+                }
+
+                let mut nft_lookups_bin = Vec::new();
+                for nft_lookup in self.nft_lookups.iter() {
+                    let (nft_hash, (block_hash, transaction_hash, index)) = nft_lookup;
+                    let mut nft_lookup_bin = vec![
+                        0u8;
+                        nft_hash.len()
+                            + block_hash.len()
+                            + transaction_hash.len()
+                            + index.serialized_len()
+                    ];
+                    let mut i = 0;
+                    nft_lookup_bin[0..i + HASH_SIZE].copy_from_slice(nft_hash);
+                    i += HASH_SIZE;
+                    nft_lookup_bin[0..i + HASH_SIZE].copy_from_slice(block_hash);
+                    i += HASH_SIZE;
+                    nft_lookup_bin[0..i + HASH_SIZE].copy_from_slice(transaction_hash);
+                    i += HASH_SIZE;
+                    index.serialize_into(&mut nft_lookup_bin, &mut i)?;
+                    nft_lookups_bin.append(&mut nft_lookup_bin);
                 }
                 let mut root_lookup_bin = vec![0u8; self.root_lookup.len() * HASH_SIZE * 2];
                 let mut i = 0;
@@ -197,6 +248,7 @@ impl Wallet {
                     mf_branches_bin,
                     mf_leafs_bin,
                     unspent_outputs_bin,
+                    nft_lookups_bin,
                     root_lookup_bin,
                     off_chain_transactions_bin,
                 })
@@ -248,7 +300,7 @@ impl Wallet {
     }
 
     #[allow(clippy::type_complexity)]
-    fn collect_for_coin_transfer(
+    pub fn collect_for_coin_transfer(
         &self,
         value: &TransactionValue,
         pk: PublicKey,

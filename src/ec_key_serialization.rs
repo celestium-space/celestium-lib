@@ -1,7 +1,7 @@
 use crate::serialize::{Serialize, StaticSized};
 use secp256k1::{PublicKey, SecretKey};
 
-pub(crate) const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
+pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
 //const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 64;
 const SECRET_KEY_SIZE: usize = 32;
 
