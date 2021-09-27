@@ -198,9 +198,9 @@ impl Wallet {
                             + output.serialized_len()
                     ];
                     let mut i = 0;
-                    unspent_output_bin[0..i + HASH_SIZE].copy_from_slice(block_hash);
+                    unspent_output_bin[i..i + HASH_SIZE].copy_from_slice(block_hash);
                     i += HASH_SIZE;
-                    unspent_output_bin[0..i + HASH_SIZE].copy_from_slice(transaction_hash);
+                    unspent_output_bin[i..i + HASH_SIZE].copy_from_slice(transaction_hash);
                     i += HASH_SIZE;
                     index.serialize_into(&mut unspent_output_bin, &mut i)?;
                     output.serialize_into(&mut unspent_output_bin, &mut i)?;
@@ -218,11 +218,11 @@ impl Wallet {
                             + index.serialized_len()
                     ];
                     let mut i = 0;
-                    nft_lookup_bin[0..i + HASH_SIZE].copy_from_slice(nft_hash);
+                    nft_lookup_bin[i..i + HASH_SIZE].copy_from_slice(nft_hash);
                     i += HASH_SIZE;
-                    nft_lookup_bin[0..i + HASH_SIZE].copy_from_slice(block_hash);
+                    nft_lookup_bin[i..i + HASH_SIZE].copy_from_slice(block_hash);
                     i += HASH_SIZE;
-                    nft_lookup_bin[0..i + HASH_SIZE].copy_from_slice(transaction_hash);
+                    nft_lookup_bin[i..i + HASH_SIZE].copy_from_slice(transaction_hash);
                     i += HASH_SIZE;
                     index.serialize_into(&mut nft_lookup_bin, &mut i)?;
                     nft_lookups_bin.append(&mut nft_lookup_bin);
