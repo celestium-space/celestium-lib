@@ -40,11 +40,11 @@ pub struct Wallet {
     pk: Option<PublicKey>,
     sk: Option<SecretKey>,
     blockchain_merkle_forest: MerkleForest<Transaction>,
-    unspent_outputs:
+    pub unspent_outputs:
         HashMap<([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
     nft_lookups: HashMap<[u8; HASH_SIZE], ([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint)>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
-    off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
+    pub off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
     thread_pool: ThreadPool,
     is_block_miner: bool,
 }
