@@ -17,7 +17,7 @@ use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
 use sha3::{Digest, Sha3_256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::task::Poll;
 
 pub const DEFAULT_N_THREADS: u64 = 0x8;
@@ -275,28 +275,21 @@ impl Wallet {
         transaction.verify_signatures(&self.blockchain_merkle_forest)
     }
 
-    pub fn get_balance(&self) -> Result<u128, String> {
-        match self.pk {
-            Some(pk) => {
-                let mut dust_gathered = 0;
-                for ((_, _, _), transaction_output) in self.unspent_outputs.iter() {
-                    if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
-                        dust_gathered += transaction_output.value.get_value().unwrap();
-                    }
-                }
-                for transaction in self.off_chain_transactions.values() {
-                    for transaction_output in transaction.get_outputs() {
-                        if transaction_output.pk == pk
-                            && transaction_output.value.is_coin_transfer()
-                        {
-                            dust_gathered += transaction_output.value.get_value().unwrap();
-                        }
-                    }
-                }
-                Ok(dust_gathered)
+    pub fn get_balance(&self, pk: PublicKey) -> Result<u128, String> {
+        let mut dust_gathered = 0;
+        for ((_, _, _), transaction_output) in self.unspent_outputs.iter() {
+            if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
+                dust_gathered += transaction_output.value.get_value().unwrap();
             }
-            None => Err(String::from("Cannot get balance without public key")),
         }
+        for transaction in self.off_chain_transactions.values() {
+            for transaction_output in transaction.get_outputs() {
+                if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
+                    dust_gathered += transaction_output.value.get_value().unwrap();
+                }
+            }
+        }
+        Ok(dust_gathered)
     }
 
     #[allow(clippy::type_complexity)]
@@ -304,6 +297,7 @@ impl Wallet {
         &self,
         value: &TransactionValue,
         pk: PublicKey,
+        black_list: HashSet<[u8; HASH_SIZE]>,
     ) -> Result<
         (
             u128,
