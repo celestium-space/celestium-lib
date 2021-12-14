@@ -297,7 +297,7 @@ impl Wallet {
         &self,
         value: &TransactionValue,
         pk: PublicKey,
-        black_list: HashSet<[u8; HASH_SIZE]>,
+        _black_list: HashSet<[u8; HASH_SIZE]>,
     ) -> Result<
         (
             u128,
@@ -369,7 +369,8 @@ impl Wallet {
         from_sk: SecretKey,
     ) -> Result<Vec<u8>, String> {
         if value.is_coin_transfer() {
-            let (dust, inputs, _used_outputs) = self.collect_for_coin_transfer(&value, from_pk)?;
+            let (dust, inputs, _used_outputs) =
+                self.collect_for_coin_transfer(&value, from_pk, HashSet::new())?;
             let change = dust - (value.get_value()? + value.get_fee()?);
             let mut outputs = vec![TransactionOutput::new(value, to_pk)];
             if change > 0 {
