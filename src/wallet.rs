@@ -325,6 +325,9 @@ impl Wallet {
         for ((block_hash, transaction_hash, index), transaction_output) in
             self.unspent_outputs.iter()
         {
+            if black_list.contains(transaction_hash) {
+                continue;
+            }
             if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
                 outputs.push((*block_hash, *transaction_hash, index.clone()));
                 let input = TransactionInput::new(*block_hash, *transaction_hash, index.clone());
