@@ -289,7 +289,7 @@ impl Wallet {
         &self,
         value: &TransactionValue,
         pk: PublicKey,
-        _black_list: HashSet<[u8; HASH_SIZE]>,
+        black_list: HashSet<[u8; HASH_SIZE]>,
     ) -> Result<
         (
             u128,
