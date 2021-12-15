@@ -82,14 +82,6 @@ impl Wallet {
         )
     }
 
-    pub fn sk(&self) -> Option<SecretKey> {
-        self.sk
-    }
-
-    pub fn pk(&self) -> Option<PublicKey> {
-        self.pk
-    }
-
     pub fn from_binary(binary_wallet: &BinaryWallet, is_block_miner: bool) -> Result<Self, String> {
         let pk = *PublicKey::from_serialized(&binary_wallet.pk_bin, &mut 0)?;
         let blockchain = *Blockchain::from_serialized(&binary_wallet.blockchain_bin, &mut 0)?;
@@ -657,17 +649,21 @@ impl Wallet {
         Block::from_serialized(&data, &mut 0)
     }
 
-    pub fn generate_init_blockchain_unmined(block_count: u128) -> Result<Vec<Block>, String> {
+    pub fn generate_init_blockchain_unmined(
+        block_count: u128,
+    ) -> Result<(Vec<Block>, SecretKey), String> {
         let (pk1, sk1) = Wallet::generate_ec_keys();
         let (pk2, _) = Wallet::generate_ec_keys();
 
-        let pk1_balance = 10000;
+        let pk1_balance = u128::MAX;
         let my_value = TransactionValue::new_coin_transfer(pk1_balance, 0)?;
         let t0_data = b"Hello, World!";
         let mut t0_data_padded = [0u8; BASE_TRANSACTION_MESSAGE_LEN];
         t0_data_padded[..t0_data.len()].copy_from_slice(t0_data);
         let mut data_hash = [0u8; HASH_SIZE];
         data_hash.copy_from_slice(&Sha3_256::digest(t0_data));
+
+        // The first (and only) coin base transaction. Block 0 creating all value in Celestium. Ever
         let prev_transaction = Transaction::new_coin_base_transaction(
             [0u8; HASH_SIZE],
             t0_data_padded,
@@ -711,7 +707,7 @@ impl Wallet {
             prev_block_hash = prev_block.hash();
             blocks.push(prev_block);
         }
-        Ok(blocks)
+        Ok((blocks, sk1))
     }
 
     pub fn create_and_mine_block_from_off_chain_transactions(&mut self) -> Result<(), String> {
@@ -727,12 +723,14 @@ impl Wallet {
     pub fn generate_init_blockchain(is_block_miner: bool) -> Result<Wallet, String> {
         let (pk1, sk1) = Wallet::generate_ec_keys();
 
-        let my_value = TransactionValue::new_coin_transfer(10000, 0)?;
+        let my_value = TransactionValue::new_coin_transfer(u128::MAX, 0)?;
 
         let mut wallet = Wallet::new(pk1, sk1, is_block_miner)?;
         let message = b"Hello, World!";
         let mut padded_message = [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN];
         padded_message[0..13].copy_from_slice(message);
+
+        // The first (and only) coin base transaction. Block 0 creating all value in Celestium. Ever
         let mut t0 = Transaction::new_coin_base_transaction(
             [0u8; 32],
             padded_message,
