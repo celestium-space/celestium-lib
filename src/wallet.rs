@@ -3,6 +3,7 @@ use crate::{
     block_hash::BlockHash,
     block_version::BlockVersion,
     blockchain::Blockchain,
+    ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
     merkle_forest::{MerkleForest, Node, HASH_SIZE},
     miner::Miner,
     serialize::{DynamicSized, Serialize, StaticSized},
@@ -12,15 +13,20 @@ use crate::{
     transaction_value::TransactionValue,
     transaction_varuint::TransactionVarUint,
 };
+use indicatif::{ProgressBar, ProgressIterator};
 use rand::rngs::ThreadRng;
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use secp256k1::Secp256k1;
 use secp256k1::{PublicKey, SecretKey};
 use sha3::{Digest, Sha3_256};
-use std::collections::{HashMap, HashSet};
-use std::task::Poll;
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+    time::Instant,
+};
+use std::{io, task::Poll};
 
-pub const DEFAULT_N_THREADS: u64 = 0x8;
+pub const DEFAULT_N_THREADS: u64 = 0x16;
 pub const DEFAULT_PAR_WORK: u64 = 0x200000;
 
 pub struct BinaryWallet {
@@ -40,8 +46,10 @@ pub struct Wallet {
     pk: Option<PublicKey>,
     sk: Option<SecretKey>,
     blockchain_merkle_forest: MerkleForest<Transaction>,
-    pub unspent_outputs:
+    pub unspent_outputs: HashMap<
+        PublicKey,
         HashMap<([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
+    >,
     nft_lookups: HashMap<[u8; HASH_SIZE], ([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint)>,
     root_lookup: HashMap<[u8; HASH_SIZE], [u8; HASH_SIZE]>,
     pub off_chain_transactions: HashMap<[u8; HASH_SIZE], Transaction>,
@@ -88,26 +96,64 @@ impl Wallet {
         let mut merkle_forest = MerkleForest::new_empty();
         merkle_forest.add_serialized_transactions(&binary_wallet.mf_leafs_bin, &mut 0)?;
         merkle_forest.add_serialized_nodes(&binary_wallet.mf_branches_bin)?;
+
         let mut i = 0;
-        let mut unspent_outputs = HashMap::new();
+        let mut unspent_outputs: HashMap<
+            PublicKey,
+            HashMap<([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint), TransactionOutput>,
+        > = HashMap::new();
         while i < binary_wallet.unspent_outputs_bin.len() {
-            let mut block_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
-            block_hash.copy_from_slice(&binary_wallet.unspent_outputs_bin[i..i + HASH_SIZE]);
-            i += HASH_SIZE;
-            let mut transaction_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
-            transaction_hash.copy_from_slice(&binary_wallet.unspent_outputs_bin[i..i + HASH_SIZE]);
-            i += HASH_SIZE;
-            unspent_outputs.insert(
-                (
+            let pk: PublicKey =
+                *PublicKey::from_serialized(&binary_wallet.unspent_outputs_bin, &mut i)?;
+            let output_count =
+                TransactionVarUint::from_serialized(&binary_wallet.unspent_outputs_bin, &mut i)?
+                    .get_value();
+
+            let mut pk_unspent_outputs = HashMap::new();
+
+            let pb = if output_count > 100_000 {
+                Some(ProgressBar::with_message(
+                    ProgressBar::new(output_count as u64),
+                    format!(
+                        "Loading big PK [0x{}...] (probably block zero)",
+                        hex::encode(&pk.serialize()[..8])
+                    ),
+                ))
+            } else {
+                None
+            };
+            for _ in 0..output_count {
+                let mut block_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+                block_hash.copy_from_slice(&binary_wallet.unspent_outputs_bin[i..i + HASH_SIZE]);
+                i += HASH_SIZE;
+                let mut transaction_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+                transaction_hash
+                    .copy_from_slice(&binary_wallet.unspent_outputs_bin[i..i + HASH_SIZE]);
+                i += HASH_SIZE;
+
+                let key = (
                     block_hash,
                     transaction_hash,
                     *TransactionVarUint::from_serialized(
                         &binary_wallet.unspent_outputs_bin,
                         &mut i,
                     )?,
-                ),
-                *TransactionOutput::from_serialized(&binary_wallet.unspent_outputs_bin, &mut i)?,
-            );
+                );
+                let value = *TransactionOutput::from_serialized(
+                    &binary_wallet.unspent_outputs_bin,
+                    &mut i,
+                )?;
+
+                pk_unspent_outputs.insert(key, value);
+
+                if let Some(ref pb) = pb {
+                    pb.inc(1);
+                }
+            }
+            if let Some(ref pb) = pb {
+                pb.finish();
+            }
+            unspent_outputs.insert(pk, pk_unspent_outputs);
         }
 
         let mut i = 0;
@@ -180,23 +226,34 @@ impl Wallet {
                 let mf_leafs_bin = self.blockchain_merkle_forest.serialize_all_transactions()?;
 
                 let mut unspent_outputs_bin = Vec::new();
-                for unspent_output in self.unspent_outputs.iter() {
-                    let ((block_hash, transaction_hash, index), output) = unspent_output;
-                    let mut unspent_output_bin = vec![
-                        0u8;
-                        block_hash.len()
-                            + transaction_hash.len()
-                            + index.serialized_len()
-                            + output.serialized_len()
-                    ];
+                for (pk, pk_unspent_outputs) in self.unspent_outputs.iter() {
+                    // Create header (public key + unspent output count)
                     let mut i = 0;
-                    unspent_output_bin[i..i + HASH_SIZE].copy_from_slice(block_hash);
-                    i += HASH_SIZE;
-                    unspent_output_bin[i..i + HASH_SIZE].copy_from_slice(transaction_hash);
-                    i += HASH_SIZE;
-                    index.serialize_into(&mut unspent_output_bin, &mut i)?;
-                    output.serialize_into(&mut unspent_output_bin, &mut i)?;
-                    unspent_outputs_bin.append(&mut unspent_output_bin);
+                    let body_count = TransactionVarUint::from(pk_unspent_outputs.len());
+                    let mut header =
+                        vec![0u8; body_count.serialized_len() + PUBLIC_KEY_COMPRESSED_SIZE];
+                    pk.serialize_into(&mut header, &mut i)?;
+                    body_count.serialize_into(&mut header, &mut i)?;
+                    unspent_outputs_bin.append(&mut header);
+
+                    // Append body (all unspent outputs for the public key)
+                    for ((block_hash, transaction_hash, index), output) in pk_unspent_outputs {
+                        let mut unspent_output_bin = vec![
+                            0u8;
+                            block_hash.len()
+                                + transaction_hash.len()
+                                + index.serialized_len()
+                                + output.serialized_len()
+                        ];
+                        let mut i = 0;
+                        unspent_output_bin[i..i + HASH_SIZE].copy_from_slice(block_hash);
+                        i += HASH_SIZE;
+                        unspent_output_bin[i..i + HASH_SIZE].copy_from_slice(transaction_hash);
+                        i += HASH_SIZE;
+                        index.serialize_into(&mut unspent_output_bin, &mut i)?;
+                        output.serialize_into(&mut unspent_output_bin, &mut i)?;
+                        unspent_outputs_bin.append(&mut unspent_output_bin);
+                    }
                 }
 
                 let mut nft_lookups_bin = Vec::new();
@@ -269,7 +326,9 @@ impl Wallet {
 
     pub fn get_balance(&self, pk: PublicKey) -> Result<u128, String> {
         let mut dust_gathered = 0;
-        for ((_, _, _), transaction_output) in self.unspent_outputs.iter() {
+        for ((_, _, _), transaction_output) in
+            self.unspent_outputs.get(&pk).unwrap_or(&HashMap::new())
+        {
             if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
                 dust_gathered += transaction_output.value.get_value().unwrap();
             }
@@ -289,39 +348,20 @@ impl Wallet {
         &self,
         value: &TransactionValue,
         pk: PublicKey,
-        black_list: HashSet<[u8; HASH_SIZE]>,
-    ) -> Result<
-        (
-            u128,
-            Vec<TransactionInput>,
-            Vec<([u8; HASH_SIZE], [u8; HASH_SIZE], TransactionVarUint)>,
-        ),
-        String,
-    > {
+        black_list: HashSet<([u8; HASH_SIZE], usize)>,
+    ) -> Result<(u128, Vec<TransactionInput>), String> {
         let mut dust_gathered = 0;
         let mut inputs = Vec::new();
-        let mut outputs = Vec::new();
-        //let cloned = self.unspent_outputs.clone();
-        // cloned.sort_by(|(a, _), (b, _)| { //TODO: Sort outputs by block index
-        //     let block_a = self
-        //         .blockchain
-        //         .get_block_time(*self.root_lookup.get(&a.hash().unwrap()).unwrap())
-        //         .unwrap();
-        //     let block_b = self
-        //         .blockchain
-        //         .get_block_time(*self.root_lookup.get(&b.hash().unwrap()).unwrap())
-        //         .unwrap();
-        //     block_a.partial_cmp(&block_b).unwrap()
-        // });
-
         for ((block_hash, transaction_hash, index), transaction_output) in
-            self.unspent_outputs.iter()
+            self.unspent_outputs.get(&pk).unwrap_or(&HashMap::new())
         {
-            if black_list.contains(transaction_hash) {
+            if black_list.contains(&(*transaction_hash, index.get_value())) {
                 continue;
             }
-            if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
-                outputs.push((*block_hash, *transaction_hash, index.clone()));
+            if transaction_output.pk == pk
+                && transaction_output.value.is_coin_transfer()
+                && transaction_output.value.get_value()? > 0
+            {
                 let input = TransactionInput::new(*block_hash, *transaction_hash, index.clone());
                 inputs.push(input);
                 dust_gathered += transaction_output.value.get_value()?;
@@ -330,11 +370,19 @@ impl Wallet {
                 }
             }
         }
-        Ok((dust_gathered, inputs, outputs))
+        Ok((dust_gathered, inputs))
     }
 
-    pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
+    pub fn add_off_chain_transaction(
+        &mut self,
+        transaction: Transaction,
+        pks: Vec<PublicKey>,
+    ) -> Result<(), String> {
         transaction.verify_signatures(&self.blockchain_merkle_forest)?;
+        if !transaction.contains_enough_work() {
+            return Err("Transaction does not contain enough work".to_string());
+        }
+
         if transaction.is_base_transaction() {
             let base_transaction_input_block_hash = transaction.get_inputs()[0].block_hash;
             let current_blockchain_head_hash = self.get_head_hash();
@@ -344,16 +392,46 @@ impl Wallet {
                     base_transaction_input_block_hash, current_blockchain_head_hash
                 ));
             }
+        } else {
+            let mut actual_inputs = vec![];
+            for pk in pks {
+                for input in transaction.get_inputs() {
+                    let output_ref = (
+                        input.block_hash,
+                        input.transaction_hash,
+                        input.index.clone(),
+                    );
+                    if !self
+                        .unspent_outputs
+                        .get(&pk)
+                        .unwrap_or(&HashMap::new())
+                        .contains_key(&output_ref)
+                    {
+                        return Err(format!(
+                            "({:x?}, {:x?}, {}), does not refer to an unspent output",
+                            input.transaction_hash,
+                            input.block_hash,
+                            input.index.clone().get_value(),
+                        ));
+                    } else {
+                        actual_inputs.push((pk, output_ref.clone()));
+                    }
+                }
+            }
+            for (pk, output_ref) in actual_inputs {
+                self.unspent_outputs
+                    .get_mut(&pk)
+                    .unwrap()
+                    .remove(&output_ref);
+                if self.unspent_outputs[&pk].len() == 0 {
+                    self.unspent_outputs.remove(&pk);
+                }
+            }
         }
 
-        let transaction_hash = transaction.hash();
-        if transaction.contains_enough_work() {
-            self.off_chain_transactions
-                .insert(transaction_hash, transaction);
-            Ok(())
-        } else {
-            Err("Transaction does not contain enough work".to_string())
-        }
+        self.off_chain_transactions
+            .insert(transaction.hash(), transaction);
+        Ok(())
     }
 
     pub fn send_with_sk(
@@ -364,8 +442,7 @@ impl Wallet {
         from_sk: SecretKey,
     ) -> Result<Vec<u8>, String> {
         if value.is_coin_transfer() {
-            let (dust, inputs, _used_outputs) =
-                self.collect_for_coin_transfer(&value, from_pk, HashSet::new())?;
+            let (dust, inputs) = self.collect_for_coin_transfer(&value, from_pk, HashSet::new())?;
             let change = dust - (value.get_value()? + value.get_fee()?);
             let mut outputs = vec![TransactionOutput::new(value, to_pk)];
             if change > 0 {
@@ -381,7 +458,7 @@ impl Wallet {
             let transaction_len = transaction.serialized_len();
             let mut serialized_transaction = vec![0u8; transaction_len];
             transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
-            self.add_off_chain_transaction(transaction)?;
+            self.add_off_chain_transaction(transaction, vec![from_pk])?;
             Ok(serialized_transaction)
         } else {
             Err(String::from("Send ID not implented"))
@@ -408,11 +485,18 @@ impl Wallet {
                     total_fee += transaction.get_total_fee();
                     transactions.push(transaction.clone());
                 }
-                transactions.push(Transaction::new_coin_base_transaction(
-                    self.get_head_hash(),
-                    [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN],
-                    TransactionOutput::new(TransactionValue::new_coin_transfer(total_fee, 0)?, pk),
-                ));
+                transactions.push(self.mine_transaction(
+                    DEFAULT_N_THREADS,
+                    DEFAULT_PAR_WORK,
+                    Transaction::new_coin_base_transaction(
+                        self.get_head_hash(),
+                        [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN],
+                        TransactionOutput::new(
+                            TransactionValue::new_coin_transfer(total_fee, 0)?,
+                            pk,
+                        ),
+                    ),
+                )?);
                 let (_, merkle_root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
                 let back_hash =
                     *BlockHash::from_serialized(&self.blockchain.get_head_hash(), &mut 0)?;
@@ -435,53 +519,76 @@ impl Wallet {
         block_hash: [u8; HASH_SIZE],
         merkle_root_hash: [u8; HASH_SIZE],
     ) -> Result<(), String> {
-        let new_branches = if self.is_block_miner {
-            let (mf, root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
-            if root != merkle_root_hash {
-                return Err(format!("Creating merkle tree from transactions does not result in correct root, expected {:?} got {:?}", root, block_hash));
-            }
-            mf.branches.values().cloned().collect::<Vec<Node>>()
-        } else {
-            Vec::new()
-        };
+        let (mf, root) = MerkleForest::new_complete_from_leafs(transactions.clone())?;
+        if root != merkle_root_hash {
+            return Err(format!("Creating merkle tree from transactions does not result in correct root, expected {:?} got {:?}", root, block_hash));
+        }
+        let coin_base_transaction_hash = mf.get_left_most_leaf(merkle_root_hash)?.hash();
+
+        println!("OCT: {}", self.off_chain_transactions.len());
+        println!("TRN: {}", transactions.len());
 
         let mut spent_outputs: Vec<([u8; HASH_SIZE], usize)> = Vec::new();
         for transaction in transactions.iter() {
-            self.off_chain_transactions.remove(&transaction.hash());
+            let transaction_hash = transaction.hash();
+            if transaction.is_coin_base_transaction()
+                && transaction.hash() != coin_base_transaction_hash
+            {
+                return Err(format!(
+                    "Got wrong right most transaction, expected {} got {}",
+                    hex::encode(coin_base_transaction_hash),
+                    hex::encode(transaction.hash())
+                ));
+            } else if !transaction.is_id_base_transaction() {
+                for (index, output) in transaction.get_outputs().iter().enumerate() {
+                    let pk = output.pk;
+                    if !self.unspent_outputs.contains_key(&pk)
+                        || !self.unspent_outputs[&pk].contains_key(&(
+                            block_hash,
+                            transaction_hash,
+                            TransactionVarUint::from(index),
+                        ))
+                    {
+                        if self.blockchain.blocks.len() > 1 {
+                            return Err(format!(
+                            "Transaction with hash 0x{} on block 0x{}; trying to double-spend at index {}",
+                            hex::encode(transaction_hash), hex::encode(block_hash), index
+                        ));
+                        }
+                    }
+                }
+            }
+        }
+        for transaction in transactions.iter() {
             let transaction_hash = transaction.hash();
             for (i, output) in transaction.get_outputs().iter().enumerate() {
                 let index = TransactionVarUint::from(i);
-                if self.is_block_miner
-                    && !self.unspent_outputs.contains_key(&(
-                        block_hash,
-                        transaction_hash,
-                        index.clone(),
-                    ))
-                    && !self.off_chain_transactions.is_empty()
-                {
-                    return Err(format!(
-                        "Transaction with hash {:?}; trying to double-spend at index {}",
-                        transaction_hash, i
-                    ));
+                let key = (block_hash, transaction_hash, index);
+                if !self.unspent_outputs.contains_key(&output.pk) {
+                    self.unspent_outputs.insert(output.pk, HashMap::new());
                 }
                 self.unspent_outputs
-                    .insert((block_hash, transaction_hash, index), output.clone());
+                    .get_mut(&output.pk)
+                    .unwrap()
+                    .insert(key, output.clone());
             }
             self.root_lookup.insert(transaction_hash, block_hash);
             for input in transaction.get_inputs() {
                 spent_outputs.push((input.transaction_hash, input.index.get_value()));
             }
         }
+
         self.blockchain_merkle_forest
             .add_transactions(transactions)?;
-        self.blockchain_merkle_forest.add_branches(new_branches)?;
+        self.blockchain_merkle_forest
+            .add_branches(mf.branches.values().cloned().collect::<Vec<Node>>())?;
 
-        self.unspent_outputs
-            .retain(|(_, transaction_hash, index), _| {
-                !spent_outputs
-                    .iter()
-                    .any(|(tx, i)| transaction_hash == tx && index.get_value() == *i)
-            });
+        // self.unspent_outputs
+        //     .retain(|(_, transaction_hash, index), _| {
+        //         !spent_outputs
+        //             .iter()
+        //             .any(|(tx, i)| transaction_hash == tx && index.get_value() == *i)
+        //     });
 
         Ok(())
     }
@@ -617,18 +724,20 @@ impl Wallet {
         &self,
         n_par_workers: u64,
         par_work: u64,
-        transaction: Transaction,
-    ) -> Result<Box<Transaction>, String> {
+        mut transaction: Transaction,
+    ) -> Result<Transaction, String> {
         let mut serialized_transaction = vec![0u8; transaction.serialized_len()];
         transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
-        let data = self.mine_data(
-            n_par_workers,
-            par_work,
-            &mut serialized_transaction
-                [0..serialized_transaction.len() - transaction.magic_serialized_len()]
-                .to_vec(),
-        )?;
-        Transaction::from_serialized(&data, &mut 0)
+        let mut hash = [0; 32];
+        hash.copy_from_slice(&Sha3_256::digest(
+            &serialized_transaction
+                [0..serialized_transaction.len() - transaction.magic_serialized_len()],
+        ));
+        let data = self.mine_data(n_par_workers, par_work, &mut hash.to_vec())?;
+        transaction.magic = TransactionVarUint {
+            value: data[HASH_SIZE..].to_vec(),
+        };
+        Ok(transaction)
     }
 
     pub fn mine_block(
@@ -649,83 +758,12 @@ impl Wallet {
         Block::from_serialized(&data, &mut 0)
     }
 
-    pub fn generate_init_blockchain_unmined(
-        block_count: u128,
-    ) -> Result<(Vec<Block>, SecretKey), String> {
-        let (pk1, sk1) = Wallet::generate_ec_keys();
-        let (pk2, _) = Wallet::generate_ec_keys();
-
-        let pk1_balance = u128::MAX;
-        let my_value = TransactionValue::new_coin_transfer(pk1_balance, 0)?;
-        let t0_data = b"Hello, World!";
-        let mut t0_data_padded = [0u8; BASE_TRANSACTION_MESSAGE_LEN];
-        t0_data_padded[..t0_data.len()].copy_from_slice(t0_data);
-        let mut data_hash = [0u8; HASH_SIZE];
-        data_hash.copy_from_slice(&Sha3_256::digest(t0_data));
-
-        // The first (and only) coin base transaction. Block 0 creating all value in Celestium. Ever
-        let prev_transaction = Transaction::new_coin_base_transaction(
-            [0u8; HASH_SIZE],
-            t0_data_padded,
-            TransactionOutput::new(my_value, pk1),
-        );
-        let t0_hash = prev_transaction.hash();
-
-        let mut prev_block = Block::new(
-            BlockVersion::default(),
-            BlockHash::from(MerkleForest::new_complete_from_leafs(vec![prev_transaction])?.1),
-            BlockHash::new_unworked(),
-            TransactionVarUint::from(0),
-        );
-        let mut prev_block_hash = prev_block.hash();
-        let mut blocks = vec![prev_block];
-
-        for i in 1..block_count {
-            let mut transaction = Transaction::new(
-                vec![TransactionInput::new(
-                    prev_block_hash,
-                    t0_hash,
-                    TransactionVarUint::from(0),
-                )],
-                vec![
-                    TransactionOutput::new(TransactionValue::new_coin_transfer(i, 1).unwrap(), pk2),
-                    TransactionOutput::new(
-                        TransactionValue::new_coin_transfer(pk1_balance - i - 2, 1).unwrap(),
-                        pk1,
-                    ),
-                ],
-            )?;
-
-            transaction.sign(sk1, 0)?;
-
-            prev_block = Block::new(
-                BlockVersion::default(),
-                BlockHash::from(MerkleForest::new_complete_from_leafs(vec![transaction])?.1),
-                BlockHash::new_unworked(),
-                TransactionVarUint::from(0),
-            );
-            prev_block_hash = prev_block.hash();
-            blocks.push(prev_block);
-        }
-        Ok((blocks, sk1))
-    }
-
-    pub fn create_and_mine_block_from_off_chain_transactions(&mut self) -> Result<(), String> {
-        let (block, transactions) = self.mining_data_from_off_chain_transactions()?;
-        let done_block = *self.mine_block(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, block)?;
-        let block_hash = done_block.hash();
-        let merkle_root_hash = done_block.merkle_root.hash();
-        self.add_block(done_block)?;
-        self.add_on_chain_transactions(transactions, block_hash, merkle_root_hash)?;
-        Ok(())
-    }
-
     pub fn generate_init_blockchain(is_block_miner: bool) -> Result<Wallet, String> {
-        let (pk1, sk1) = Wallet::generate_ec_keys();
+        let (pk, sk) = Wallet::generate_ec_keys();
 
         let my_value = TransactionValue::new_coin_transfer(u128::MAX, 0)?;
 
-        let mut wallet = Wallet::new(pk1, sk1, is_block_miner)?;
+        let mut wallet = Wallet::new(pk, sk, is_block_miner)?;
         let message = b"Hello, World!";
         let mut padded_message = [0u8; transaction::BASE_TRANSACTION_MESSAGE_LEN];
         padded_message[0..13].copy_from_slice(message);
@@ -734,12 +772,64 @@ impl Wallet {
         let mut t0 = Transaction::new_coin_base_transaction(
             [0u8; 32],
             padded_message,
-            TransactionOutput::new(my_value, pk1),
+            TransactionOutput::new(my_value.clone(), pk),
         );
-        t0 = *wallet.mine_transaction(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, t0)?;
 
-        wallet.add_off_chain_transaction(t0)?;
-        wallet.create_and_mine_block_from_off_chain_transactions()?;
+        print!("Starting mining T0... ");
+        io::stdout().flush().unwrap();
+        let start = Instant::now();
+        t0 = wallet.mine_transaction(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, t0)?;
+        println!("Done! {:?}", start.elapsed());
+
+        let pure_value = 30_000_000_000_000_000_000_000_000_000_000;
+        let value = TransactionValue::new_coin_transfer(pure_value, 0)?;
+        let mut outputs = vec![];
+
+        let output_count = 11_000_000;
+        for _ in (0..output_count).progress() {
+            outputs.push(TransactionOutput::new(value.clone(), pk));
+        }
+        outputs.push(TransactionOutput::new(
+            TransactionValue::new_coin_transfer(u128::MAX - pure_value * output_count as u128, 0)?,
+            pk,
+        ));
+
+        let mut t1 = Transaction::new(
+            vec![TransactionInput::new(
+                [0u8; HASH_SIZE],
+                t0.hash(),
+                TransactionVarUint::from(0),
+            )],
+            outputs,
+        )?;
+
+        t1.sign(sk, 0)?;
+
+        print!("Starting mining T1... ");
+        io::stdout().flush().unwrap();
+        let start = Instant::now();
+        t1 = wallet.mine_transaction(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, t1)?;
+        println!("Done! {:?}", start.elapsed());
+
+        let (_, merkle_root_hash) =
+            MerkleForest::new_complete_from_leafs(vec![t0.clone(), t1.clone()])?;
+
+        let block = Block::new(
+            BlockVersion::default(),
+            BlockHash::from(merkle_root_hash),
+            *BlockHash::from_serialized(&[0u8; HASH_SIZE], &mut 0)?,
+            TransactionVarUint::from(0),
+        );
+
+        print!("Starting mining B0... ");
+        io::stdout().flush().unwrap();
+        let start = Instant::now();
+        let done_block = *wallet.mine_block(DEFAULT_N_THREADS, DEFAULT_PAR_WORK, block)?;
+        println!("Done! {:?}", start.elapsed());
+
+        let block_hash = done_block.hash();
+        wallet.add_block(done_block)?;
+        wallet.add_on_chain_transactions(vec![t0, t1], block_hash, merkle_root_hash)?;
         Ok(wallet)
     }
 

@@ -4,11 +4,10 @@ use crate::{
     serialize::{DynamicSized, Serialize},
     transaction_input::TransactionInput,
     transaction_output::TransactionOutput,
-    transaction_value::TransactionValue,
     transaction_varuint::TransactionVarUint,
     transaction_version::TransactionVersion,
 };
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
+use secp256k1::{Message, Secp256k1, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
 
 pub const SECP256K1_SIG_LEN: usize = 64;
@@ -19,7 +18,7 @@ pub struct Transaction {
     version: TransactionVersion,
     inputs: Vec<(TransactionInput, Option<Signature>)>,
     outputs: Vec<TransactionOutput>,
-    magic: TransactionVarUint,
+    pub magic: TransactionVarUint,
     is_base: bool,
 }
 
@@ -38,18 +37,6 @@ impl Transaction {
             magic: TransactionVarUint::from(0),
             is_base: false,
         })
-    }
-
-    pub fn new_nft_base_transaction(
-        block_hash: [u8; HASH_SIZE],
-        nft: [u8; BASE_TRANSACTION_MESSAGE_LEN],
-        pk: PublicKey,
-    ) -> Self {
-        let mut hash = [0u8; HASH_SIZE];
-        hash.copy_from_slice(&Sha3_256::digest(&nft));
-        let transaction_output =
-            TransactionOutput::new(TransactionValue::new_id_transfer(hash).unwrap(), pk);
-        Transaction::new_coin_base_transaction(block_hash, nft, transaction_output)
     }
 
     pub fn new_coin_base_transaction(
@@ -182,12 +169,25 @@ impl Transaction {
         }
     }
 
+    fn _contains_enough_work(hash: &[u8]) -> bool {
+        // make proof-of-work easier if this feature is set at compile time
+        // really only useful for development and testing
+        #[cfg(feature = "mining-ez-mode")]
+        {
+            hash[0] == 0 && hash[1] == 0
+        }
+        #[cfg(not(feature = "mining-ez-mode"))]
+        {
+            hash[0] == 0 && hash[1] == 0 && hash[2] == 0
+        }
+    }
+
     pub fn contains_enough_work(&self) -> bool {
         let mut serialized_transaction = vec![0u8; self.serialized_len()];
         match self.serialize_into(&mut serialized_transaction, &mut 0) {
             Ok(_) => {
                 let hash = Sha3_256::digest(&serialized_transaction).to_vec();
-                BlockHash::contains_enough_work(&hash)
+                Transaction::_contains_enough_work(&hash)
             }
             Err(_) => false,
         }

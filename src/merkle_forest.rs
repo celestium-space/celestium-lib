@@ -137,8 +137,8 @@ impl MerkleForest<Transaction> {
                 let leaf_hash = l.hash();
                 self.leafs.insert(leaf_hash, l);
                 return Err(format!(
-                    "Transaction with hash {:?} already exists in merkle forest",
-                    leaf_hash
+                    "Transaction with hash 0x{} already exists in merkle forest",
+                    hex::encode(leaf_hash)
                 ));
             }
         }
@@ -286,6 +286,34 @@ impl MerkleForest<Transaction> {
         self.leafs.extend(merkle_tree.leafs);
         self.branches.extend(merkle_tree.branches);
         Ok(())
+    }
+
+    pub fn get_left_most_leaf(&self, root: [u8; HASH_SIZE]) -> Result<Transaction, String> {
+        if let Some(l) = self.leafs.get(&root) {
+            return Ok(l.clone());
+        }
+
+        let mut left_most = match self.branches.get(&root) {
+            Some(n) => n,
+            None => {
+                return Err(format!(
+                    "Could not find merkle root 0x{} in {} branches",
+                    hex::encode(root),
+                    self.branches.len()
+                ));
+            }
+        };
+        while let Some(node) = self.branches.get(&left_most.left) {
+            left_most = node;
+        }
+        match self.leafs.get(&left_most.left) {
+            Some(leaf) => Ok(leaf.clone()),
+            None => Err(format!(
+                "Root not found in merkle tree {:?}; {:?}",
+                self.branches.values().next().unwrap().hash(),
+                root
+            )),
+        }
     }
 
     pub fn get_merkle_tree(&self, root: [u8; 32]) -> Result<(Vec<Node>, Vec<Transaction>), String> {
