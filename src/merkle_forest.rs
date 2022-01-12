@@ -212,7 +212,6 @@ impl MerkleForest<Transaction> {
         Ok(serialized)
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn get_transactions(
         &self,
         hashes: Vec<[u8; 32]>,
@@ -230,6 +229,10 @@ impl MerkleForest<Transaction> {
         } else {
             Ok(found)
         }
+    }
+
+    pub fn get_all_transactions(&self) -> Vec<Transaction> {
+        self.leafs.values().cloned().collect()
     }
 
     pub fn is_ancestor(

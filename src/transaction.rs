@@ -1,5 +1,4 @@
 use crate::{
-    block_hash::BlockHash,
     merkle_forest::{MerkleForest, HASH_SIZE},
     serialize::{DynamicSized, Serialize},
     transaction_input::TransactionInput,
@@ -106,10 +105,10 @@ impl Transaction {
         self.magic.serialized_len()
     }
 
-    pub fn hash(&self) -> [u8; 32] {
+    pub fn hash(&self) -> [u8; HASH_SIZE] {
         let mut data = vec![0; self.serialized_len()];
         self.serialize_into(&mut data, &mut 0).unwrap();
-        let mut hash = [0; 32];
+        let mut hash = [0; HASH_SIZE];
         hash.copy_from_slice(&Sha3_256::digest(&data));
         hash
     }
@@ -182,15 +181,19 @@ impl Transaction {
         }
     }
 
-    pub fn contains_enough_work(&self) -> bool {
+    pub fn contains_enough_work(&self) -> Result<bool, String> {
         let mut serialized_transaction = vec![0u8; self.serialized_len()];
-        match self.serialize_into(&mut serialized_transaction, &mut 0) {
-            Ok(_) => {
-                let hash = Sha3_256::digest(&serialized_transaction).to_vec();
-                Transaction::_contains_enough_work(&hash)
-            }
-            Err(_) => false,
-        }
+        self.serialize_into(&mut serialized_transaction, &mut 0)?;
+        let non_magic_hash = Sha3_256::digest(
+            &serialized_transaction[..serialized_transaction.len() - self.magic.serialized_len()],
+        )
+        .to_vec();
+        let mut magic_digest = vec![0u8; non_magic_hash.len() + self.magic.serialized_len()];
+        magic_digest[..non_magic_hash.len()].copy_from_slice(&non_magic_hash);
+        let mut i = non_magic_hash.len();
+        self.magic.serialize_into(&mut magic_digest, &mut i)?;
+        let hash = Sha3_256::digest(&magic_digest);
+        Ok(Transaction::_contains_enough_work(&hash))
     }
 
     // pub fn verify_content(&self) -> Result<(), String> {
