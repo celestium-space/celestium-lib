@@ -1,17 +1,15 @@
 use crate::{
     block::Block,
     block_hash::BlockHash,
-    block_version::BlockVersion,
-    merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
-    transaction_varuint::TransactionVarUint,
+    wallet::HASH_SIZE,
 };
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 
 pub struct Blockchain {
-    pub blocks: HashMap<[u8; HASH_SIZE], Block>,
-    head: Option<[u8; HASH_SIZE]>,
+    pub blocks: HashMap<BlockHash, Block>,
+    head: Option<BlockHash>,
 }
 
 impl Blockchain {
@@ -21,7 +19,7 @@ impl Blockchain {
             blocks: blocks
                 .iter()
                 .map(|x| (x.hash(), x.clone()))
-                .collect::<HashMap<[u8; HASH_SIZE], Block>>(),
+                .collect::<HashMap<BlockHash, Block>>(),
             head,
         }
     }
@@ -59,54 +57,23 @@ impl Blockchain {
         self.blocks.is_empty()
     }
 
-    pub fn create_unmined_block(&self, merkle_root: BlockHash) -> Result<Vec<u8>, String> {
-        let back_hash;
-        match self.head {
-            Some(head) => match self.blocks.get(&head) {
-                Some(last_block) => {
-                    let mut last_block_serialized = vec![0; last_block.serialized_len()];
-                    let mut i = 0;
-                    self.blocks
-                        .get(&self.head.unwrap())
-                        .unwrap()
-                        .serialize_into(&mut last_block_serialized, &mut i)?;
-                    back_hash = *BlockHash::from_serialized(
-                        &Sha3_256::digest(&last_block_serialized[..i]),
-                        &mut 0,
-                    )?;
-                }
-                None => back_hash = BlockHash::default(),
-            },
-            None => back_hash = BlockHash::default(),
-        }
-        let unmined_block = Block::new(
-            BlockVersion::default(),
-            merkle_root,
-            back_hash,
-            TransactionVarUint::from(0),
-        );
-        let mut unmined_serialized_block = vec![0u8; unmined_block.serialized_len()];
-        unmined_block.serialize_into(&mut unmined_serialized_block, &mut 0)?;
-        Ok(unmined_serialized_block)
-    }
-
-    pub fn get_head_hash(&self) -> [u8; 32] {
-        self.head.unwrap_or([0u8; 32])
+    pub fn get_head_hash(&self) -> BlockHash {
+        self.head.as_ref().unwrap_or(&BlockHash::default()).clone()
     }
 
     pub fn add_block(&mut self, block: Block) -> Result<[u8; HASH_SIZE], String> {
-        if self.head.is_some() && block.back_hash.hash() != self.head.unwrap() {
+        if self.head.is_some() && block.back_hash != *self.head.as_ref().unwrap() {
             Err(format!(
-                "New block not pointing at old head, expected backhash {:?} got {:?}",
-                self.head.unwrap(),
-                block.back_hash.hash()
+                "New block not pointing at old head, expected backhash {} got {}",
+                self.head.as_ref().unwrap(),
+                block.back_hash
             ))
         } else {
             let hash = block.hash();
-            let merkle_root = block.merkle_root.hash();
-            self.blocks.insert(hash, block);
+            let transactions_hash = block.transactions_hash.hash();
+            self.blocks.insert(hash.clone(), block);
             self.head = Some(hash);
-            Ok(merkle_root)
+            Ok(transactions_hash)
         }
     }
 
@@ -115,7 +82,7 @@ impl Blockchain {
         self.add_block(block)
     }
 
-    pub fn contains_block(&self, hash: [u8; 32]) -> bool {
+    pub fn contains_block(&self, hash: BlockHash) -> bool {
         self.blocks.contains_key(&hash)
     }
 
@@ -133,7 +100,7 @@ impl Blockchain {
             ));
         }
         let mut merkle_roots = Vec::new();
-        match self.head {
+        match &self.head {
             Some(head) => {
                 let mut hash = head;
                 let mut blocks = Vec::new();
@@ -141,7 +108,7 @@ impl Blockchain {
                     match self.blocks.get(&hash) {
                         Some(b) => {
                             blocks.insert(0, b);
-                            hash = b.back_hash.hash();
+                            hash = &b.back_hash;
                         }
                         None => {
                             return Err(format!(
@@ -152,7 +119,7 @@ impl Blockchain {
                     }
                 }
                 for block in blocks {
-                    merkle_roots.push(block.merkle_root.hash());
+                    merkle_roots.push(block.transactions_hash.hash());
                     block.serialize_into(data, &mut i)?;
                 }
             }

@@ -1,5 +1,7 @@
 use crate::{
-    serialize::{DynamicSized, Serialize},
+    block_hash::BlockHash,
+    serialize::{DynamicSized, Serialize, StaticSized},
+    transaction_hash::TransactionHash,
     transaction_varuint::TransactionVarUint,
 };
 
@@ -9,21 +11,21 @@ const HASH_SIZE: usize = 32;
 
 #[derive(Clone)]
 pub struct TransactionInput {
-    pub block_hash: [u8; HASH_SIZE],
-    pub transaction_hash: [u8; HASH_SIZE],
-    pub index: TransactionVarUint,
+    pub block_hash: BlockHash,
+    pub transaction_hash: TransactionHash,
+    pub output_index: TransactionVarUint,
 }
 
 impl TransactionInput {
     pub fn new(
-        block_hash: [u8; HASH_SIZE],
-        transaction_hash: [u8; HASH_SIZE],
-        index: TransactionVarUint,
+        block_hash: BlockHash,
+        transaction_hash: TransactionHash,
+        output_index: TransactionVarUint,
     ) -> Self {
         TransactionInput {
             block_hash,
             transaction_hash,
-            index,
+            output_index,
         }
     }
 
@@ -35,38 +37,36 @@ impl TransactionInput {
         hash
     }
 
-    pub fn sign_hash(&self) -> [u8; HASH_SIZE] {
-        let mut self_serialized = vec![0u8; HASH_SIZE + self.index.serialized_len()];
-        self_serialized[0..HASH_SIZE].copy_from_slice(&self.block_hash);
-        self_serialized[0..HASH_SIZE].copy_from_slice(&self.transaction_hash);
-        self.index
-            .serialize_into(&mut self_serialized, &mut (HASH_SIZE * 2))
-            .unwrap();
+    pub fn sign_hash(&self) -> Result<[u8; HASH_SIZE], String> {
+        let mut self_serialized = vec![0u8; HASH_SIZE + self.output_index.serialized_len()];
+        let mut i = 0;
+        self.block_hash
+            .serialize_into(&mut self_serialized, &mut i)?;
+        self.transaction_hash
+            .serialize_into(&mut self_serialized, &mut i)?;
+        self.output_index
+            .serialize_into(&mut self_serialized, &mut i)?;
         let mut hash = [0u8; HASH_SIZE];
         hash.copy_from_slice(Sha3_256::digest(&self_serialized).as_slice());
-        hash
+        Ok(hash)
     }
 }
 
 impl PartialEq for TransactionInput {
     fn eq(&self, other: &Self) -> bool {
-        self.transaction_hash == other.transaction_hash && self.index == other.index
+        self.transaction_hash == other.transaction_hash && self.output_index == other.output_index
     }
 }
 
 impl Serialize for TransactionInput {
     fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<Self>, String> {
-        let mut block_hash = [0u8; HASH_SIZE];
-        block_hash.copy_from_slice(&data[*i..*i + HASH_SIZE]);
-        *i += HASH_SIZE;
-        let mut transaction_hash = [0u8; HASH_SIZE];
-        transaction_hash.copy_from_slice(&data[*i..*i + HASH_SIZE]);
-        *i += HASH_SIZE;
-        let index = *TransactionVarUint::from_serialized(data, i)?;
+        let block_hash = *BlockHash::from_serialized(data, i)?;
+        let transaction_hash = *TransactionHash::from_serialized(data, i)?;
+        let output_index = *TransactionVarUint::from_serialized(data, i)?;
         Ok(Box::new(TransactionInput {
             block_hash,
             transaction_hash,
-            index,
+            output_index,
         }))
     }
 
@@ -79,17 +79,17 @@ impl Serialize for TransactionInput {
                 bytes_left
             ));
         }
-        data[*i..*i + HASH_SIZE].copy_from_slice(&self.block_hash);
-        *i += HASH_SIZE;
-        data[*i..*i + HASH_SIZE].copy_from_slice(&self.transaction_hash);
-        *i += HASH_SIZE;
-        self.index.serialize_into(data, i)?;
+        self.block_hash.serialize_into(data, i)?;
+        self.transaction_hash.serialize_into(data, i)?;
+        self.output_index.serialize_into(data, i)?;
         Ok(())
     }
 }
 
 impl DynamicSized for TransactionInput {
     fn serialized_len(&self) -> usize {
-        HASH_SIZE * 2 + self.index.serialized_len()
+        BlockHash::serialized_len()
+            + TransactionHash::serialized_len()
+            + self.output_index.serialized_len()
     }
 }

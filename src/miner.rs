@@ -3,6 +3,7 @@ use crate::{
     block_hash::BlockHash,
     magic::Magic,
     serialize::{DynamicSized, Serialize},
+    transaction_hash::TransactionHash,
     transaction_varuint::TransactionVarUint,
 };
 use sha3::{Digest, Sha3_256};
@@ -42,10 +43,24 @@ impl Miner {
         )
     }
 
-    pub fn do_work(&mut self) -> Poll<Option<Vec<u8>>> {
+    pub fn do_block_work(&mut self) -> Poll<Option<Vec<u8>>> {
         let magic_end = self.magic_start + self.magic_len;
         if self.i <= self.end
             && !BlockHash::contains_enough_work(&Sha3_256::digest(&self.data[0..magic_end]))
+        {
+            self.magic_len = Magic::increase(&mut self.data[self.magic_start..], self.magic_len);
+            self.i += 1;
+            Poll::Pending
+        } else if self.i <= self.end {
+            Poll::Ready(Some(self.data[0..magic_end].to_vec()))
+        } else {
+            Poll::Ready(None)
+        }
+    }
+    pub fn do_transaction_work(&mut self) -> Poll<Option<Vec<u8>>> {
+        let magic_end = self.magic_start + self.magic_len;
+        if self.i <= self.end
+            && !TransactionHash::contains_enough_work(&Sha3_256::digest(&self.data[0..magic_end]))
         {
             self.magic_len = Magic::increase(&mut self.data[self.magic_start..], self.magic_len);
             self.i += 1;

@@ -4,10 +4,10 @@ pub mod block_version;
 pub mod blockchain;
 pub mod ec_key_serialization;
 pub mod magic;
-pub mod merkle_forest;
 pub mod miner;
 pub mod serialize;
 pub mod transaction;
+pub mod transaction_hash;
 pub mod transaction_input;
 pub mod transaction_output;
 pub mod transaction_value;
@@ -74,19 +74,6 @@ mod tests {
     fn transaction_not_mined() {
         let (transaction, _) = create_test_set();
         assert!(!transaction.contains_enough_work());
-    }
-
-    #[test]
-    fn transaction_valid_signature() {
-        let (mut transaction, wallet) = create_test_set();
-        transaction.sign(wallet.sk().unwrap(), 0).unwrap();
-        wallet.verify_transaction(transaction).unwrap();
-    }
-
-    #[test]
-    fn transaction_invalid_signatrue() {
-        let (transaction, wallet) = create_test_set();
-        assert!(wallet.verify_transaction(transaction).is_err());
     }
 
     #[test]

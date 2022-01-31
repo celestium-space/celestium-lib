@@ -99,7 +99,7 @@ impl From<usize> for TransactionVarUint {
 
 impl Display for TransactionVarUint {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:x?}", self.value)
+        write!(f, "{}", self.get_value())
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
-    merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
+    wallet::HASH_SIZE,
 };
 use sha3::{Digest, Sha3_256};
 

@@ -1,13 +1,13 @@
 use crate::{
-    merkle_forest::HASH_SIZE,
     serialize::{DynamicSized, Serialize},
     transaction_varuint::TransactionVarUint,
+    wallet::HASH_SIZE,
 };
 use std::fmt::{self, Display, Formatter};
 
-const TRANSACTION_ID_LEN: usize = TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
 const TRANSACTION_FEE_LEN: usize = 16;
 const TRANSACTION_VALUE_LEN: usize = 16;
+const TRANSACTION_ID_LEN: usize = TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
 
 #[derive(Clone)]
 pub struct TransactionValue {

@@ -8,13 +8,15 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct BlockHash {
-    value: [u8; 32],
+pub struct TransactionHash {
+    value: [u8; HASH_SIZE],
 }
 
-impl BlockHash {
-    pub fn new_unworked() -> BlockHash {
-        BlockHash { value: [0xff; 32] }
+impl TransactionHash {
+    pub fn new_unworked() -> TransactionHash {
+        TransactionHash {
+            value: [0xff; HASH_SIZE],
+        }
     }
 
     pub fn contains_enough_work(hash: &[u8]) -> bool {
@@ -26,12 +28,12 @@ impl BlockHash {
         }
         #[cfg(not(feature = "mining-ez-mode"))]
         {
-            hash[0] == 0 && hash[1] == 0 //&& hash[2] == 0 && hash[3] == 0
+            hash[0] == 0x00 && hash[1] == 0x00 //&& hash[2] == 0x00 && hash[3] <= 0x0f
         }
     }
 
     pub fn is_zero_block(&self) -> bool {
-        self.value == [0; 32]
+        self.value == [0; HASH_SIZE]
     }
 
     pub fn hash(&self) -> [u8; HASH_SIZE] {
@@ -39,59 +41,62 @@ impl BlockHash {
     }
 }
 
-impl From<[u8; HASH_SIZE]> for BlockHash {
+impl From<[u8; HASH_SIZE]> for TransactionHash {
     fn from(value: [u8; HASH_SIZE]) -> Self {
-        BlockHash { value }
+        TransactionHash { value }
     }
 }
 
-impl Default for BlockHash {
+impl Default for TransactionHash {
     fn default() -> Self {
-        BlockHash { value: [0; 32] }
+        TransactionHash {
+            value: [0; HASH_SIZE],
+        }
     }
 }
 
-impl PartialEq for BlockHash {
+impl PartialEq for TransactionHash {
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
     }
 }
-impl Eq for BlockHash {}
+impl Eq for TransactionHash {}
 
-impl Hash for BlockHash {
+impl Hash for TransactionHash {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.value.hash(state);
     }
 }
 
-impl Display for BlockHash {
+impl Display for TransactionHash {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "[0x{}]", hex::encode(self.value))
     }
 }
 
-impl Serialize for BlockHash {
-    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<BlockHash>, String> {
-        if data.len() - *i < 32 {
+impl Serialize for TransactionHash {
+    fn from_serialized(data: &[u8], i: &mut usize) -> Result<Box<TransactionHash>, String> {
+        if data.len() - *i < HASH_SIZE {
             return Err(format!(
-                "Cannot deserialize hash, expected buffer with least 32 bytes left got {}",
+                "Cannot deserialize hash, expected buffer with least {} bytes left got {}",
+                HASH_SIZE,
                 data.len() - *i
             ));
         };
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&data[*i..*i + 32]);
-        *i += 32;
-        Ok(Box::new(BlockHash { value: hash }))
+        let mut hash = [0u8; HASH_SIZE];
+        hash.copy_from_slice(&data[*i..*i + HASH_SIZE]);
+        *i += HASH_SIZE;
+        Ok(Box::new(TransactionHash { value: hash }))
     }
 
     fn serialize_into(&self, buffer: &mut [u8], i: &mut usize) -> Result<(), String> {
-        buffer[*i..*i + 32].copy_from_slice(&self.value);
-        *i += BlockHash::serialized_len();
+        buffer[*i..*i + HASH_SIZE].copy_from_slice(&self.value);
+        *i += TransactionHash::serialized_len();
         Ok(())
     }
 }
 
-impl StaticSized for BlockHash {
+impl StaticSized for TransactionHash {
     fn serialized_len() -> usize {
         HASH_SIZE
     }
