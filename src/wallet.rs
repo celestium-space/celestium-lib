@@ -575,7 +575,9 @@ impl Wallet {
                         println!("WARNING: NFT Lookup table out of sync with Unspent Outputs!")
                     };
                 }
-                pk_unspent_outputs.remove(&output_ref).unwrap();
+                if let None = pk_unspent_outputs.remove(&output_ref) {
+                    println!("WARNING: Could not remove spent output {} on transaction {} on block {} from unspent outputs", output_ref.0, output_ref.1, output_ref.2)
+                };
                 if self.unspent_outputs[&pk].len() == 0 {
                     self.unspent_outputs.remove(&pk);
                 }

@@ -28,7 +28,7 @@ impl TransactionHash {
         }
         #[cfg(not(feature = "mining-ez-mode"))]
         {
-            hash[0] == 0x00 && hash[1] == 0x00 //&& hash[2] == 0x00 && hash[3] <= 0x0f
+            hash[0] == 0x00 && hash[1] == 0x00 && hash[2] == 0x00
         }
     }
 
