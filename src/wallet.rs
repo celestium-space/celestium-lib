@@ -1037,6 +1037,22 @@ impl Wallet {
         self.nft_lookup.len()
     }
 
+    pub fn get_transaction(
+        &self,
+        block_hash: BlockHash,
+        transaction_hash: TransactionHash,
+    ) -> Option<&Transaction> {
+        if block_hash.is_zero_block() {
+            self.off_chain_transactions.get(&transaction_hash)
+        } else {
+            if let Some(b) = self.on_chain_transactions.get(&block_hash) {
+                b.get(&transaction_hash)
+            } else {
+                None
+            }
+        }
+    }
+
     pub fn lookup_nft(
         &self,
         nft_hash: [u8; HASH_SIZE],
