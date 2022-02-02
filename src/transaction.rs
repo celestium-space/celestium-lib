@@ -308,7 +308,7 @@ impl Transaction {
                 }
             }
 
-            for (i, (input, _)) in self.inputs.clone().into_iter().enumerate() {
+            for (input, _) in self.inputs.clone().into_iter() {
                 let key = &(input.block_hash, input.transaction_hash, input.output_index);
                 let mut output_found = false;
 
@@ -426,7 +426,7 @@ impl Serialize for Transaction {
             TransactionVarUint::from(self.inputs.len()).serialize_into(data, i)?;
         }
 
-        for (index, (input, signature)) in self.inputs.iter().enumerate() {
+        for (input, signature) in self.inputs.iter() {
             input.serialize_into(&mut data, i)?;
             if !self.is_base_transaction() {
                 match signature {

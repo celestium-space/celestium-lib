@@ -516,6 +516,16 @@ impl Wallet {
     }
 
     pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
+        if transaction.is_id_base_transaction() {
+            let id = transaction.get_outputs()[0].value.get_id()?;
+            if self.nft_lookup.get(&id).is_some() {
+                return Err(format!(
+                    "ID [0x{}] already exists on blockchain",
+                    hex::encode(id)
+                ));
+            }
+        }
+
         let mut transactions = HashMap::new();
         transactions.insert(
             BlockHash::from([0u8; HASH_SIZE]),
