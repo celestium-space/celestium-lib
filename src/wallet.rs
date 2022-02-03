@@ -56,6 +56,25 @@ pub struct Wallet {
     pub thread_pool: ThreadPool,
 }
 
+// impl Clone for Wallet {
+//     fn clone(&self) -> Self {
+//         println!("WARNING: Wallet cloned");
+//         Self {
+//             blockchain: self.blockchain.clone(),
+//             pk: self.pk.clone(),
+//             sk: self.sk.clone(),
+//             on_chain_transactions: self.on_chain_transactions.clone(),
+//             unspent_outputs: self.unspent_outputs.clone(),
+//             nft_lookup: self.nft_lookup.clone(),
+//             off_chain_transactions: self.off_chain_transactions.clone(),
+//             thread_pool: ThreadPoolBuilder::new()
+//                 .num_threads(DEFAULT_N_THREADS as usize)
+//                 .build()
+//                 .unwrap(),
+//         }
+//     }
+// }
+
 impl Wallet {
     pub fn new_with_treadpool(
         pk: PublicKey,
@@ -515,7 +534,10 @@ impl Wallet {
         Ok((dust_gathered, inputs))
     }
 
-    pub fn verify_transaction(&self, transaction: Transaction) -> Result<(), String> {
+    pub fn verify_off_chain_transaction(
+        &self,
+        transaction: &Transaction,
+    ) -> Result<Vec<(PublicKey, (BlockHash, TransactionHash, TransactionVarUint))>, String> {
         if transaction.is_id_base_transaction() {
             let id = transaction.get_outputs()[0].value.get_id()?;
             if self.nft_lookup.get(&id).is_some() {
@@ -526,14 +548,13 @@ impl Wallet {
             }
         }
 
-        let mut transactions = HashMap::new();
-        transactions.insert(
-            BlockHash::from([0u8; HASH_SIZE]),
-            self.off_chain_transactions.clone(),
-        );
-        transactions.extend(self.on_chain_transactions.clone());
-        let pks = transaction.verify_transaction(&transactions, self.unspent_outputs.clone())?;
+        let pks = transaction.verify_transaction(
+            &self.off_chain_transactions,
+            &self.on_chain_transactions,
+            &self.unspent_outputs,
+        )?;
 
+        let mut actual_inputs = Vec::new();
         if transaction.is_base_transaction() {
             let base_transaction_input_block_hash = transaction.get_inputs()[0].block_hash.clone();
             let current_blockchain_head_hash = self.get_head_hash();
@@ -554,73 +575,11 @@ impl Wallet {
                     );
                     if self
                         .unspent_outputs
-                        .get(pk)
+                        .get(&pk)
                         .unwrap_or(&HashMap::new())
                         .contains_key(&output_ref)
                     {
-                        actual_input = Some((pk, output_ref.clone()));
-                        break;
-                    }
-                }
-                if let None = actual_input {
-                    return Err(format!(
-                        "({}, {}, {}), does not refer to an unspent output",
-                        input.transaction_hash,
-                        input.block_hash,
-                        input.output_index.clone().get_value(),
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
-        if transaction.is_id_base_transaction() {
-            let id = transaction.get_outputs()[0].value.get_id()?;
-            if self.nft_lookup.get(&id).is_some() {
-                return Err(format!(
-                    "ID [0x{}] already exists on blockchain",
-                    hex::encode(id)
-                ));
-            }
-        }
-
-        let mut transactions = HashMap::new();
-        transactions.insert(
-            BlockHash::from([0u8; HASH_SIZE]),
-            self.off_chain_transactions.clone(),
-        );
-        transactions.extend(self.on_chain_transactions.clone());
-        let pks = transaction.verify_transaction(&transactions, self.unspent_outputs.clone())?;
-
-        if transaction.is_base_transaction() {
-            let base_transaction_input_block_hash = transaction.get_inputs()[0].block_hash.clone();
-            let current_blockchain_head_hash = self.get_head_hash();
-            if base_transaction_input_block_hash != current_blockchain_head_hash {
-                return Err(format!(
-                    "Base transaction input block hash {} does not match head block hash {}",
-                    base_transaction_input_block_hash, current_blockchain_head_hash
-                ));
-            }
-        } else {
-            let mut actual_inputs = vec![];
-
-            for input in transaction.get_inputs() {
-                let mut actual_input = None;
-                for pk in pks.iter() {
-                    let output_ref = (
-                        input.block_hash.clone(),
-                        input.transaction_hash.clone(),
-                        input.output_index.clone(),
-                    );
-                    if self
-                        .unspent_outputs
-                        .get(pk)
-                        .unwrap_or(&HashMap::new())
-                        .contains_key(&output_ref)
-                    {
-                        actual_input = Some((pk, output_ref.clone()));
+                        actual_input = Some((pk.clone(), output_ref.clone()));
                         break;
                     }
                 }
@@ -635,22 +594,27 @@ impl Wallet {
                     ));
                 }
             }
+        }
+        Ok(actual_inputs)
+    }
 
-            for (pk, output_ref) in actual_inputs {
-                let pk_unspent_outputs = self.unspent_outputs.get_mut(&pk).unwrap();
-                let unspent_output = pk_unspent_outputs.get(&output_ref).unwrap();
+    pub fn add_off_chain_transaction(&mut self, transaction: &Transaction) -> Result<(), String> {
+        let actual_inputs = self.verify_off_chain_transaction(transaction)?;
 
-                if unspent_output.value.is_id_transfer() {
-                    if let None = self.nft_lookup.remove(&unspent_output.value.get_id()?) {
-                        println!("WARNING: NFT Lookup table out of sync with Unspent Outputs!")
-                    };
-                }
-                if let None = pk_unspent_outputs.remove(&output_ref) {
-                    println!("WARNING: Could not remove spent output {} on transaction {} on block {} from unspent outputs", output_ref.0, output_ref.1, output_ref.2)
+        for (pk, output_ref) in actual_inputs {
+            let pk_unspent_outputs = self.unspent_outputs.get_mut(&pk).unwrap();
+            let unspent_output = pk_unspent_outputs.get(&output_ref).unwrap();
+
+            if unspent_output.value.is_id_transfer() {
+                if let None = self.nft_lookup.remove(&unspent_output.value.get_id()?) {
+                    println!("WARNING: NFT Lookup table out of sync with Unspent Outputs!")
                 };
-                if self.unspent_outputs[&pk].len() == 0 {
-                    self.unspent_outputs.remove(&pk);
-                }
+            }
+            if let None = pk_unspent_outputs.remove(&output_ref) {
+                println!("WARNING: Could not remove spent output {} on transaction {} on block {} from unspent outputs", output_ref.0, output_ref.1, output_ref.2)
+            };
+            if self.unspent_outputs[&pk].len() == 0 {
+                self.unspent_outputs.remove(&pk);
             }
         }
 
@@ -680,7 +644,7 @@ impl Wallet {
         }
 
         self.off_chain_transactions
-            .insert(transaction.hash()?, transaction);
+            .insert(transaction.hash()?, transaction.clone());
         Ok(())
     }
 
@@ -708,7 +672,7 @@ impl Wallet {
             let transaction_len = transaction.serialized_len();
             let mut serialized_transaction = vec![0u8; transaction_len];
             transaction.serialize_into(&mut serialized_transaction, &mut 0)?;
-            self.add_off_chain_transaction(transaction)?;
+            self.add_off_chain_transaction(&transaction)?;
             Ok(serialized_transaction)
         } else {
             Err(String::from("Send ID not implented"))

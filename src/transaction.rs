@@ -240,7 +240,8 @@ impl Transaction {
 
     pub fn verify_signatures(
         &self,
-        transactions: &HashMap<BlockHash, IndexMap<TransactionHash, Transaction>>,
+        my_block_transactions: &IndexMap<TransactionHash, Transaction>,
+        on_chain_transactions: &HashMap<BlockHash, IndexMap<TransactionHash, Transaction>>,
     ) -> Result<Vec<PublicKey>, String> {
         if self.is_base_transaction() {
             return Ok(Vec::new());
@@ -250,8 +251,17 @@ impl Transaction {
         let mut pks = Vec::new();
         for (i, (input, signature)) in self.inputs.iter().enumerate() {
             match signature {
-                Some(s) => match transactions.get(&input.block_hash) {
-                    Some(transactions) => match transactions.get(&input.transaction_hash) {
+                Some(s) => {
+                    let transactions = if input.block_hash == BlockHash::from([0u8; HASH_SIZE]) {
+                        my_block_transactions
+                    } else {
+                        match on_chain_transactions.get(&input.block_hash) {
+                            Some(t) => t,
+                            None => return Err(format!("Block {} not found", input.block_hash)),
+                        }
+                    };
+
+                    match transactions.get(&input.transaction_hash) {
                         Some(tx) => {
                             let pk = tx.get_output(&input.output_index).pk;
                             if let Err(e) = secp.verify(&trans_hash, s, &pk) {
@@ -268,9 +278,8 @@ impl Transaction {
                             input.transaction_hash, input.block_hash
                         ))
                         }
-                    },
-                    None => return Err(format!("Block {} not found", input.block_hash)),
-                },
+                    }
+                }
                 None => {
                     return Err(format!("Input at index {} is not signed", i));
                 }
@@ -281,8 +290,9 @@ impl Transaction {
 
     pub fn verify_transaction(
         &self,
-        transactions: &HashMap<BlockHash, IndexMap<TransactionHash, Transaction>>,
-        unspent_outputs: HashMap<
+        my_block_transactions: &IndexMap<TransactionHash, Transaction>,
+        on_chain_transactions: &HashMap<BlockHash, IndexMap<TransactionHash, Transaction>>,
+        unspent_outputs: &HashMap<
             PublicKey,
             HashMap<(BlockHash, TransactionHash, OutputIndex), TransactionOutput>,
         >,
@@ -294,7 +304,7 @@ impl Transaction {
             ));
         }
 
-        let pks = self.verify_signatures(transactions)?;
+        let pks = self.verify_signatures(my_block_transactions, on_chain_transactions)?;
 
         // Check if transaction is balanced (input value == output value)
         if !self.is_id_base_transaction() {
@@ -308,8 +318,12 @@ impl Transaction {
                 }
             }
 
-            for (input, _) in self.inputs.clone().into_iter() {
-                let key = &(input.block_hash, input.transaction_hash, input.output_index);
+            for (input, _) in self.inputs.iter() {
+                let key = &(
+                    input.block_hash.clone(),
+                    input.transaction_hash.clone(),
+                    input.output_index.clone(),
+                );
                 let mut output_found = false;
 
                 for pk in pks.iter() {
