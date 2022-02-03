@@ -515,6 +515,66 @@ impl Wallet {
         Ok((dust_gathered, inputs))
     }
 
+    pub fn verify_transaction(&self, transaction: Transaction) -> Result<(), String> {
+        if transaction.is_id_base_transaction() {
+            let id = transaction.get_outputs()[0].value.get_id()?;
+            if self.nft_lookup.get(&id).is_some() {
+                return Err(format!(
+                    "ID [0x{}] already exists on blockchain",
+                    hex::encode(id)
+                ));
+            }
+        }
+
+        let mut transactions = HashMap::new();
+        transactions.insert(
+            BlockHash::from([0u8; HASH_SIZE]),
+            self.off_chain_transactions.clone(),
+        );
+        transactions.extend(self.on_chain_transactions.clone());
+        let pks = transaction.verify_transaction(&transactions, self.unspent_outputs.clone())?;
+
+        if transaction.is_base_transaction() {
+            let base_transaction_input_block_hash = transaction.get_inputs()[0].block_hash.clone();
+            let current_blockchain_head_hash = self.get_head_hash();
+            if base_transaction_input_block_hash != current_blockchain_head_hash {
+                return Err(format!(
+                    "Base transaction input block hash {} does not match head block hash {}",
+                    base_transaction_input_block_hash, current_blockchain_head_hash
+                ));
+            }
+        } else {
+            for input in transaction.get_inputs() {
+                let mut actual_input = None;
+                for pk in pks.iter() {
+                    let output_ref = (
+                        input.block_hash.clone(),
+                        input.transaction_hash.clone(),
+                        input.output_index.clone(),
+                    );
+                    if self
+                        .unspent_outputs
+                        .get(pk)
+                        .unwrap_or(&HashMap::new())
+                        .contains_key(&output_ref)
+                    {
+                        actual_input = Some((pk, output_ref.clone()));
+                        break;
+                    }
+                }
+                if let None = actual_input {
+                    return Err(format!(
+                        "({}, {}, {}), does not refer to an unspent output",
+                        input.transaction_hash,
+                        input.block_hash,
+                        input.output_index.clone().get_value(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_off_chain_transaction(&mut self, transaction: Transaction) -> Result<(), String> {
         if transaction.is_id_base_transaction() {
             let id = transaction.get_outputs()[0].value.get_id()?;
