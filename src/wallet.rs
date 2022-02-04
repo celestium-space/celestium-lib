@@ -464,6 +464,13 @@ impl Wallet {
         }
     }
 
+    pub fn serialize_blockchain(&self) -> Result<Vec<u8>, String> {
+        let mut serialized_blocks = vec![0u8; self.blockchain.serialized_len()];
+        self.blockchain
+            .serialize_into(&mut serialized_blocks, &mut 0)?;
+        Ok(serialized_blocks)
+    }
+
     pub fn count_blocks(&self) -> usize {
         self.blockchain.len()
     }
