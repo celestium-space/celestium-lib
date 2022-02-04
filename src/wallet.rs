@@ -1085,12 +1085,10 @@ impl Wallet {
     ) -> Option<&Transaction> {
         if block_hash.is_zero_block() {
             self.off_chain_transactions.get(&transaction_hash)
+        } else if let Some(b) = self.on_chain_transactions.get(&block_hash) {
+            b.get(&transaction_hash)
         } else {
-            if let Some(b) = self.on_chain_transactions.get(&block_hash) {
-                b.get(&transaction_hash)
-            } else {
-                None
-            }
+            None
         }
     }
 
@@ -1098,11 +1096,7 @@ impl Wallet {
         &self,
         nft_hash: [u8; HASH_SIZE],
     ) -> Option<(BlockHash, TransactionHash, TransactionVarUint)> {
-        if let Some(nft_ref) = self.nft_lookup.get(&nft_hash) {
-            Some(nft_ref.clone())
-        } else {
-            None
-        }
+        self.nft_lookup.get(&nft_hash).cloned()
     }
 
     // pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {
