@@ -7,7 +7,7 @@ use std::fmt::{self, Display, Formatter};
 
 const TRANSACTION_FEE_LEN: usize = 16;
 const TRANSACTION_VALUE_LEN: usize = 16;
-const TRANSACTION_ID_LEN: usize = TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
+pub const TRANSACTION_ID_LEN: usize = TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN;
 
 #[derive(Clone)]
 pub struct TransactionValue {

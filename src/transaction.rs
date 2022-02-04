@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet};
-
+use crate::transaction_value::TRANSACTION_ID_LEN;
 use crate::{
     block_hash::BlockHash,
     serialize::{DynamicSized, Serialize, StaticSized},
@@ -13,6 +12,7 @@ use crate::{
 use indexmap::IndexMap;
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, Signature};
 use sha3::{Digest, Sha3_256};
+use std::collections::{HashMap, HashSet};
 
 pub const SECP256K1_SIG_LEN: usize = 64;
 pub const BASE_TRANSACTION_MESSAGE_LEN: usize = 33;
@@ -90,6 +90,14 @@ impl Transaction {
             })
         } else {
             Err("Trying to create id base transaction which does not have id value".to_string())
+        }
+    }
+
+    pub fn get_id(&self) -> Result<[u8; TRANSACTION_ID_LEN], String> {
+        if self.is_id_base_transaction() {
+            Ok(self.outputs[0].value.get_id().unwrap())
+        } else {
+            Err("Can only get ID from ID base transactions".to_string())
         }
     }
 
