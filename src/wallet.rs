@@ -124,6 +124,7 @@ impl Wallet {
     pub fn from_binary(
         binary_wallet: &BinaryWallet,
         reload_unspent_outputs: bool,
+        reload_nft_lookups: bool,
         ignore_off_chain_transactions: bool,
     ) -> Result<Self, String> {
         let pk = *PublicKey::from_serialized(&binary_wallet.pk_bin, &mut 0)?;
@@ -326,21 +327,35 @@ impl Wallet {
 
         let mut i = 0;
         let mut nft_lookup = HashMap::new();
-        while i < binary_wallet.nft_lookups_bin.len() {
-            let mut nft_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
-            nft_hash.copy_from_slice(&binary_wallet.nft_lookups_bin[i..i + HASH_SIZE]);
-            i += HASH_SIZE;
-            let block_hash = *BlockHash::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?;
-            let transaction_hash =
-                *TransactionHash::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?;
-            nft_lookup.insert(
-                nft_hash,
-                (
-                    block_hash,
-                    transaction_hash,
-                    *TransactionVarUint::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?,
-                ),
-            );
+        if !reload_nft_lookups {
+            while i < binary_wallet.nft_lookups_bin.len() {
+                let mut nft_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
+                nft_hash.copy_from_slice(&binary_wallet.nft_lookups_bin[i..i + HASH_SIZE]);
+                i += HASH_SIZE;
+                let block_hash =
+                    *BlockHash::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?;
+                let transaction_hash =
+                    *TransactionHash::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?;
+                nft_lookup.insert(
+                    nft_hash,
+                    (
+                        block_hash,
+                        transaction_hash,
+                        *TransactionVarUint::from_serialized(
+                            &binary_wallet.nft_lookups_bin,
+                            &mut i,
+                        )?,
+                    ),
+                );
+            }
+        } else {
+            for (pk, pk_unspent_outputs) in unspent_outputs.iter() {
+                for ((bh, th, i), to) in pk_unspent_outputs {
+                    if let Ok(id) = to.value.get_id() {
+                        nft_lookup.insert(id, (bh.clone(), th.clone(), i.clone()));
+                    }
+                }
+            }
         }
 
         let thread_pool = ThreadPoolBuilder::new()
@@ -483,17 +498,32 @@ impl Wallet {
         Ok(value)
     }
 
-    pub fn get_balance(&self, pk: PublicKey) -> Result<(u128, Vec<TransactionValue>), String> {
+    pub fn get_balance(
+        &self,
+        pk: PublicKey,
+    ) -> Result<(u128, Vec<TransactionValue>, Vec<TransactionValue>), String> {
         let mut dust_gathered = 0;
-        let mut owned_ids = Vec::new();
-        for ((_, _, _), transaction_output) in
+        let mut owned_base_ids = Vec::new();
+        let mut owned_transferred_ids = Vec::new();
+        for ((bh, th, i), transaction_output) in
             self.unspent_outputs.get(&pk).unwrap_or(&HashMap::new())
         {
             if transaction_output.pk == pk {
+                let transaction = if bh == &BlockHash::from([0u8; HASH_SIZE]) {
+                    self.off_chain_transactions.get(th).unwrap()
+                } else {
+                    self.on_chain_transactions
+                        .get(&bh)
+                        .unwrap()
+                        .get(th)
+                        .unwrap()
+                };
                 if transaction_output.value.is_coin_transfer() {
                     dust_gathered += transaction_output.value.get_value().unwrap();
+                } else if transaction.is_base_transaction() {
+                    owned_base_ids.push(transaction_output.value.clone());
                 } else {
-                    owned_ids.push(transaction_output.value.clone());
+                    owned_transferred_ids.push(transaction_output.value.clone());
                 }
             }
         }
@@ -504,7 +534,7 @@ impl Wallet {
         //         }
         //     }
         // }
-        Ok((dust_gathered, owned_ids))
+        Ok((dust_gathered, owned_base_ids, owned_transferred_ids))
     }
 
     #[allow(clippy::type_complexity)]
