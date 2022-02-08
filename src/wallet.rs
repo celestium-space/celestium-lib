@@ -14,7 +14,7 @@ use crate::{
     transaction_varuint::TransactionVarUint,
 };
 use indexmap::IndexMap;
-use indicatif::{ProgressBar, ProgressIterator};
+use indicatif::{ProgressBar, ProgressIterator, ProgressStyle};
 use rand::rngs::ThreadRng;
 use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use secp256k1::Secp256k1;
@@ -30,6 +30,8 @@ use std::{io, task::Poll};
 pub const HASH_SIZE: usize = 32;
 pub const DEFAULT_N_THREADS: u64 = 0x16;
 pub const DEFAULT_PAR_WORK: u64 = 0x200000;
+pub const DEFAULT_PROGRESSBAR_TEMPLATE: &str =
+    "{msg} [{elapsed_precise}] [{wide_bar}] {pos}/{len} [{eta_precise}]";
 
 pub struct BinaryWallet {
     pub blockchain_bin: Vec<u8>,
@@ -51,7 +53,7 @@ pub struct Wallet {
     pub on_chain_transactions: HashMap<BlockHash, IndexMap<TransactionHash, Transaction>>,
     pub unspent_outputs:
         HashMap<PublicKey, HashMap<(BlockHash, TransactionHash, OutputIndex), TransactionOutput>>,
-    nft_lookup: HashMap<NFTHash, (BlockHash, TransactionHash, OutputIndex)>,
+    nft_lookup: HashMap<NFTHash, (PublicKey, BlockHash, TransactionHash, OutputIndex)>,
     pub off_chain_transactions: IndexMap<TransactionHash, Transaction>,
     pub thread_pool: ThreadPool,
 }
@@ -181,13 +183,17 @@ impl Wallet {
                 let mut pk_unspent_outputs = HashMap::new();
 
                 let pb = if output_count > 100_000 {
-                    Some(ProgressBar::with_message(
+                    let pb = ProgressBar::with_message(
                         ProgressBar::new(output_count as u64),
                         format!(
                             "Loading big PK [0x{}...] (probably block zero)",
                             hex::encode(&pk.serialize()[..8])
                         ),
-                    ))
+                    );
+                    pb.set_style(
+                        ProgressStyle::default_bar().template(DEFAULT_PROGRESSBAR_TEMPLATE),
+                    );
+                    Some(pb)
                 } else {
                     None
                 };
@@ -234,13 +240,17 @@ impl Wallet {
                 for (_, transaction) in transactions {
                     let outputs = transaction.get_outputs();
                     let pb = if outputs.len() > 100_000 {
-                        Some(ProgressBar::with_message(
+                        let pb = ProgressBar::with_message(
                             ProgressBar::new(outputs.len() as u64),
                             format!(
                                 "Loading big PK [0x{}...] (probably block zero)",
                                 hex::encode(&pk.serialize()[..8])
                             ),
-                        ))
+                        );
+                        pb.set_style(
+                            ProgressStyle::default_bar().template(DEFAULT_PROGRESSBAR_TEMPLATE),
+                        );
+                        Some(pb)
                     } else {
                         None
                     };
@@ -332,6 +342,7 @@ impl Wallet {
                 let mut nft_hash: [u8; HASH_SIZE] = [0u8; HASH_SIZE];
                 nft_hash.copy_from_slice(&binary_wallet.nft_lookups_bin[i..i + HASH_SIZE]);
                 i += HASH_SIZE;
+                let pk = *PublicKey::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?;
                 let block_hash =
                     *BlockHash::from_serialized(&binary_wallet.nft_lookups_bin, &mut i)?;
                 let transaction_hash =
@@ -339,6 +350,7 @@ impl Wallet {
                 nft_lookup.insert(
                     nft_hash,
                     (
+                        pk,
                         block_hash,
                         transaction_hash,
                         *TransactionVarUint::from_serialized(
@@ -349,11 +361,34 @@ impl Wallet {
                 );
             }
         } else {
+            println!("Reloading NFT lookups from unspent outputs");
             for (pk, pk_unspent_outputs) in unspent_outputs.iter() {
+                let output_count = pk_unspent_outputs.len();
+                let pb = if output_count > 100_000 {
+                    let pb = ProgressBar::with_message(
+                        ProgressBar::new(output_count as u64),
+                        format!(
+                            "Loading big PK [0x{}...] (probably block zero)",
+                            hex::encode(&pk.serialize()[..8])
+                        ),
+                    );
+                    pb.set_style(
+                        ProgressStyle::default_bar().template(DEFAULT_PROGRESSBAR_TEMPLATE),
+                    );
+                    Some(pb)
+                } else {
+                    None
+                };
                 for ((bh, th, i), to) in pk_unspent_outputs {
                     if let Ok(id) = to.value.get_id() {
-                        nft_lookup.insert(id, (bh.clone(), th.clone(), i.clone()));
+                        nft_lookup.insert(id, (pk.clone(), bh.clone(), th.clone(), i.clone()));
                     }
+                    if let Some(ref pb) = pb {
+                        pb.inc(1);
+                    }
+                }
+                if let Some(ref pb) = pb {
+                    pb.finish();
                 }
             }
         }
@@ -439,10 +474,11 @@ impl Wallet {
 
                 let mut nft_lookups_bin = Vec::new();
                 for nft_lookup in self.nft_lookup.iter() {
-                    let (nft_hash, (block_hash, transaction_hash, index)) = nft_lookup;
+                    let (nft_hash, (pk, block_hash, transaction_hash, index)) = nft_lookup;
                     let mut nft_lookup_bin = vec![
                         0u8;
                         nft_hash.len()
+                            + PublicKey::serialized_len()
                             + BlockHash::serialized_len()
                             + TransactionHash::serialized_len()
                             + index.serialized_len()
@@ -450,6 +486,7 @@ impl Wallet {
                     let mut i = 0;
                     nft_lookup_bin[i..i + HASH_SIZE].copy_from_slice(nft_hash);
                     i += HASH_SIZE;
+                    pk.serialize_into(&mut nft_lookup_bin, &mut i)?;
                     block_hash.serialize_into(&mut nft_lookup_bin, &mut i)?;
                     transaction_hash.serialize_into(&mut nft_lookup_bin, &mut i)?;
                     index.serialize_into(&mut nft_lookup_bin, &mut i)?;
@@ -505,7 +542,7 @@ impl Wallet {
         let mut dust_gathered = 0;
         let mut owned_base_ids = Vec::new();
         let mut owned_transferred_ids = Vec::new();
-        for ((bh, th, i), transaction_output) in
+        for ((bh, th, _), transaction_output) in
             self.unspent_outputs.get(&pk).unwrap_or(&HashMap::new())
         {
             if transaction_output.pk == pk {
@@ -527,13 +564,6 @@ impl Wallet {
                 }
             }
         }
-        // for transaction in self.off_chain_transactions.values() {
-        //     for transaction_output in transaction.get_outputs() {
-        //         if transaction_output.pk == pk && transaction_output.value.is_coin_transfer() {
-        //             dust_gathered += transaction_output.value.get_value().unwrap();
-        //         }
-        //     }
-        // }
         Ok((dust_gathered, owned_base_ids, owned_transferred_ids))
     }
 
@@ -672,6 +702,7 @@ impl Wallet {
                 self.nft_lookup.insert(
                     output.value.get_id()?,
                     (
+                        pk,
                         BlockHash::from([0u8; HASH_SIZE]),
                         transaction.hash()?,
                         TransactionVarUint::from(index),
@@ -1125,7 +1156,7 @@ impl Wallet {
     pub fn lookup_nft(
         &self,
         nft_hash: [u8; HASH_SIZE],
-    ) -> Option<(BlockHash, TransactionHash, TransactionVarUint)> {
+    ) -> Option<(PublicKey, BlockHash, TransactionHash, TransactionVarUint)> {
         self.nft_lookup.get(&nft_hash).cloned()
     }
 
