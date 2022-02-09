@@ -15,3 +15,5 @@ keys/
 **/*.bin
 node_modules
 node_modules
+data*
+blocks*
