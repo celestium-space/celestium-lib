@@ -538,11 +538,18 @@ impl Wallet {
     pub fn get_balance(
         &self,
         pk: PublicKey,
-    ) -> Result<(u128, Vec<TransactionValue>, Vec<TransactionValue>), String> {
+    ) -> Result<
+        (
+            u128,
+            Vec<(TransactionInput, TransactionValue)>,
+            Vec<(TransactionInput, TransactionValue)>,
+        ),
+        String,
+    > {
         let mut dust_gathered = 0;
         let mut owned_base_ids = Vec::new();
         let mut owned_transferred_ids = Vec::new();
-        for ((bh, th, _), transaction_output) in
+        for ((bh, th, i), transaction_output) in
             self.unspent_outputs.get(&pk).unwrap_or(&HashMap::new())
         {
             if transaction_output.pk == pk {
@@ -558,9 +565,15 @@ impl Wallet {
                 if transaction_output.value.is_coin_transfer() {
                     dust_gathered += transaction_output.value.get_value().unwrap();
                 } else if transaction.is_base_transaction() {
-                    owned_base_ids.push(transaction_output.value.clone());
+                    owned_base_ids.push((
+                        TransactionInput::new(bh.clone(), th.clone(), i.clone()),
+                        transaction_output.value.clone(),
+                    ));
                 } else {
-                    owned_transferred_ids.push(transaction_output.value.clone());
+                    owned_transferred_ids.push((
+                        TransactionInput::new(bh.clone(), th.clone(), i.clone()),
+                        transaction_output.value.clone(),
+                    ));
                 }
             }
         }

@@ -116,6 +116,10 @@ impl Transaction {
     pub fn count_inputs(&self) -> usize {
         self.inputs.len()
     }
+    
+    pub fn count_outputs(&self) -> usize {
+        self.outputs.len()
+    }
 
     pub fn get_output(&self, index: &TransactionVarUint) -> TransactionOutput {
         self.outputs[index.get_value()].clone()
