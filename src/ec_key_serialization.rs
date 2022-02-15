@@ -33,7 +33,7 @@ impl Serialize for PublicKey {
         let bytes_left = data.len() - *i;
         if bytes_left < Self::serialized_len() {
             return Err(format!(
-                "Too few bytes left to serialize public key into, expected at least {} got {}",
+                "Too few bytes left to serialize public key into, expected at least {} got {}",
                 Self::serialized_len(),
                 bytes_left
             ));
@@ -71,7 +71,7 @@ impl Serialize for SecretKey {
         let bytes_left = data.len() - *i;
         if bytes_left < self_bytes.len() {
             return Err(format!(
-                "Too few bytes left to serialize secret key into, expected at least {} got {}",
+                "Too few bytes left to serialize secret key into, expected at least {} got {}",
                 Self::serialized_len(),
                 bytes_left
             ));

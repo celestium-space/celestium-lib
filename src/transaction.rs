@@ -138,7 +138,7 @@ impl Transaction {
     ) -> Result<[u8; BASE_TRANSACTION_MESSAGE_LEN], String> {
         if self.is_id_base_transaction() {
             let mut base_transaction_message = [0u8; BASE_TRANSACTION_MESSAGE_LEN];
-            &self.inputs[0]
+            self.inputs[0]
                 .0
                 .transaction_hash
                 .serialize_into(&mut base_transaction_message, &mut 0)?;
@@ -159,7 +159,7 @@ impl Transaction {
         let mut i = 0;
         non_magic_hash.serialize_into(&mut digest, &mut i)?;
         self.magic.serialize_into(&mut digest, &mut i)?;
-        return Ok(*TransactionHash::from_serialized(&Sha3_256::digest(&digest), &mut 0).unwrap());
+        Ok(*TransactionHash::from_serialized(&Sha3_256::digest(&digest), &mut 0).unwrap())
     }
 
     pub fn get_total_fee(&self) -> u128 {
@@ -240,15 +240,8 @@ impl Transaction {
             )
             .to_vec(),
         );
-        return Ok(TransactionHash::from(non_magic_hash_slice));
+        Ok(TransactionHash::from(non_magic_hash_slice))
     }
-
-    // pub fn verify_content(&self) -> Result<(), String> {
-    //     let mut input_value = 0;
-    //     for input in self.inputs{
-    //         input.
-    //     }
-    // }
 
     pub fn verify_signatures(
         &self,
@@ -300,6 +293,10 @@ impl Transaction {
         Ok(pks)
     }
 
+    pub fn contains_enough_work(&self) -> Result<bool, String> {
+        Ok(TransactionHash::contains_enough_work(&self.hash()?.hash()))
+    }
+
     pub fn verify_transaction(
         &self,
         my_block_transactions: &IndexMap<TransactionHash, Transaction>,
@@ -309,7 +306,7 @@ impl Transaction {
             HashMap<(BlockHash, TransactionHash, OutputIndex), TransactionOutput>,
         >,
     ) -> Result<Vec<PublicKey>, String> {
-        if !TransactionHash::contains_enough_work(&self.hash()?.hash()) {
+        if !self.contains_enough_work()? {
             return Err(format!(
                 "Transaction ({}) does not contain enough work",
                 self.hash()?
@@ -343,10 +340,8 @@ impl Transaction {
                         if let Some(output) = pk_unspent_outputs.get(key) {
                             if output.value.is_coin_transfer() {
                                 total_dust -= output.value.get_value()?;
-                            } else {
-                                if !transaction_ids.remove(&output.value.get_id()?) {
-                                    return Err(format!("Transaction trying to spent output {} on transaction {} on block {}, which has not been declared as an input", key.2, key.1, key.0));
-                                };
+                            } else if !transaction_ids.remove(&output.value.get_id()?) {
+                                return Err(format!("Transaction trying to spent output {} on transaction {} on block {}, which has not been declared as an input", key.2, key.1, key.0));
                             }
                             output_found = true;
                             break;
@@ -369,7 +364,7 @@ impl Transaction {
                     total_dust
                 ));
             }
-            if transaction_ids.len() != 0 {
+            if !transaction_ids.is_empty() {
                 return Err(format!(
                     "Transaction has {} unspent inputs",
                     transaction_ids.len()

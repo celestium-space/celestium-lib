@@ -20,14 +20,14 @@ mod tests {
     use crate::{
         block_hash::BlockHash,
         ec_key_serialization::PUBLIC_KEY_COMPRESSED_SIZE,
-        merkle_forest::HASH_SIZE,
         serialize::DynamicSized,
         transaction::{Transaction, SECP256K1_SIG_LEN},
+        transaction_hash::TransactionHash,
         transaction_input::TransactionInput,
         transaction_output::TransactionOutput,
         transaction_value::TransactionValue,
         transaction_varuint::TransactionVarUint,
-        wallet::{self, Wallet},
+        wallet::{self, Wallet, HASH_SIZE},
     };
 
     fn create_test_set() -> (Transaction, Wallet) {
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn transaction_not_mined() {
         let (transaction, _) = create_test_set();
-        assert!(!transaction.contains_enough_work());
+        assert!(Ok(false) == transaction.contains_enough_work());
     }
 
     #[test]
@@ -81,8 +81,8 @@ mod tests {
         let (pk, sk) = crate::wallet::Wallet::generate_ec_keys();
         let mut transaction = Transaction::new(
             vec![TransactionInput::new(
-                BlockHash::new_unworked().hash(),
-                BlockHash::new_unworked().hash(),
+                BlockHash::from([0u8; HASH_SIZE]),
+                TransactionHash::from([0u8; HASH_SIZE]),
                 TransactionVarUint::from(0),
             )],
             vec![TransactionOutput::new(
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn wallet_generation_and_mining_test() {
-        match crate::wallet::Wallet::generate_init_blockchain(true) {
+        match crate::wallet::Wallet::generate_init_blockchain() {
             Ok(wallet) => match wallet.to_binary() {
                 Ok(bw) => {
                     println!("{:x?}", bw.blockchain_bin);

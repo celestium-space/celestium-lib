@@ -133,7 +133,7 @@ impl Serialize for TransactionValue {
         let bytes_left = data.len() - *i;
         if bytes_left < TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN {
             return Err(format!(
-                "Too few bytes left to make transaction value, expected at least {} got {}",
+                "Too few bytes left to make transaction value, expected at least {} got {}",
                 TRANSACTION_VALUE_LEN + TRANSACTION_FEE_LEN,
                 bytes_left
             ));
@@ -148,7 +148,7 @@ impl Serialize for TransactionValue {
         let bytes_left = data.len() - *i;
         if bytes_left < self.serialized_len() {
             return Err(format!(
-                "Too few bytes left to serialize transaction value into, expected at least {} got {}",
+                "Too few bytes left to serialize transaction value into, expected at least {} got {}",
                 self.serialized_len(), bytes_left
             ));
         }

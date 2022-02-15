@@ -46,6 +46,8 @@ pub struct BinaryWallet {
 pub type NFTHash = [u8; HASH_SIZE];
 pub type OutputIndex = TransactionVarUint;
 
+/// A Wallet is the interface used to interact with the blockchain.
+///
 pub struct Wallet {
     blockchain: Blockchain,
     pk: Option<PublicKey>,
@@ -57,25 +59,6 @@ pub struct Wallet {
     pub off_chain_transactions: IndexMap<TransactionHash, Transaction>,
     pub thread_pool: ThreadPool,
 }
-
-// impl Clone for Wallet {
-//     fn clone(&self) -> Self {
-//         println!("WARNING: Wallet cloned");
-//         Self {
-//             blockchain: self.blockchain.clone(),
-//             pk: self.pk.clone(),
-//             sk: self.sk.clone(),
-//             on_chain_transactions: self.on_chain_transactions.clone(),
-//             unspent_outputs: self.unspent_outputs.clone(),
-//             nft_lookup: self.nft_lookup.clone(),
-//             off_chain_transactions: self.off_chain_transactions.clone(),
-//             thread_pool: ThreadPoolBuilder::new()
-//                 .num_threads(DEFAULT_N_THREADS as usize)
-//                 .build()
-//                 .unwrap(),
-//         }
-//     }
-// }
 
 impl Wallet {
     pub fn new_with_treadpool(
@@ -109,7 +92,7 @@ impl Wallet {
         )
     }
 
-    fn serialize_transactions(transactions: &Vec<Transaction>) -> Result<Vec<u8>, String> {
+    fn serialize_transactions(transactions: &[Transaction]) -> Result<Vec<u8>, String> {
         let mut length = 0;
         for transaction in transactions {
             length += transaction.serialized_len();
@@ -282,11 +265,14 @@ impl Wallet {
                             } else {
                                 block_hash.clone()
                             };
-                            if let None = tmp_unspent_outputs.remove(&(
-                                input_block_hash,
-                                input.transaction_hash.clone(),
-                                input.output_index.clone(),
-                            )) {
+                            if tmp_unspent_outputs
+                                .remove(&(
+                                    input_block_hash,
+                                    input.transaction_hash.clone(),
+                                    input.output_index.clone(),
+                                ))
+                                .is_none()
+                            {
                                 return Err(format!(
                                     "Input {} on transaction {} is trying to spend non-existing or already spent output {} at index {} on block {}", 
                                     i, transaction.hash()?, input.output_index, input.transaction_hash, input.block_hash
@@ -314,11 +300,14 @@ impl Wallet {
                 for transaction in off_chain_transactions.values() {
                     if !transaction.is_base_transaction() {
                         for input in transaction.get_inputs() {
-                            if let None = tmp_unspent_outputs.remove(&(
-                                input.block_hash,
-                                input.transaction_hash,
-                                input.output_index,
-                            )) {
+                            if tmp_unspent_outputs
+                                .remove(&(
+                                    input.block_hash,
+                                    input.transaction_hash,
+                                    input.output_index,
+                                ))
+                                .is_none()
+                            {
                                 panic!("ERROR");
                             }
                         }
@@ -327,9 +316,9 @@ impl Wallet {
             }
 
             for (key, output) in tmp_unspent_outputs {
-                if !unspent_outputs.contains_key(&output.pk) {
-                    unspent_outputs.insert(output.pk, HashMap::new());
-                }
+                unspent_outputs
+                    .entry(output.pk)
+                    .or_insert_with(HashMap::new);
                 let pk_outputs = unspent_outputs.get_mut(&output.pk).unwrap();
                 pk_outputs.insert(key, output);
             }
@@ -381,7 +370,7 @@ impl Wallet {
                 };
                 for ((bh, th, i), to) in pk_unspent_outputs {
                     if let Ok(id) = to.value.get_id() {
-                        nft_lookup.insert(id, (pk.clone(), bh.clone(), th.clone(), i.clone()));
+                        nft_lookup.insert(id, (*pk, bh.clone(), th.clone(), i.clone()));
                     }
                     if let Some(ref pb) = pb {
                         pb.inc(1);
@@ -659,7 +648,7 @@ impl Wallet {
                         .unwrap_or(&HashMap::new())
                         .contains_key(&output_ref)
                     {
-                        actual_input = Some((pk.clone(), output_ref.clone()));
+                        actual_input = Some((*pk, output_ref.clone()));
                         break;
                     }
                 }
@@ -685,24 +674,25 @@ impl Wallet {
             let pk_unspent_outputs = self.unspent_outputs.get_mut(&pk).unwrap();
             let unspent_output = pk_unspent_outputs.get(&output_ref).unwrap();
 
-            if unspent_output.value.is_id_transfer() {
-                if let None = self.nft_lookup.remove(&unspent_output.value.get_id()?) {
-                    println!("WARNING: NFT Lookup table out of sync with Unspent Outputs!")
-                };
+            if unspent_output.value.is_id_transfer()
+                && self
+                    .nft_lookup
+                    .remove(&unspent_output.value.get_id()?)
+                    .is_none()
+            {
+                println!("WARNING: NFT Lookup table out of sync with Unspent Outputs!")
             }
-            if let None = pk_unspent_outputs.remove(&output_ref) {
+            if pk_unspent_outputs.remove(&output_ref).is_none() {
                 println!("WARNING: Could not remove spent output {} on transaction {} on block {} from unspent outputs", output_ref.0, output_ref.1, output_ref.2)
             };
-            if self.unspent_outputs[&pk].len() == 0 {
+            if self.unspent_outputs[&pk].is_empty() {
                 self.unspent_outputs.remove(&pk);
             }
         }
 
         for (index, output) in transaction.get_outputs().iter().enumerate() {
             let pk = output.pk;
-            if !self.unspent_outputs.contains_key(&pk) {
-                self.unspent_outputs.insert(pk, HashMap::new());
-            }
+            self.unspent_outputs.entry(pk).or_insert_with(HashMap::new);
             self.unspent_outputs.get_mut(&pk).unwrap().insert(
                 (
                     BlockHash::from([0u8; HASH_SIZE]),
@@ -844,19 +834,18 @@ impl Wallet {
             } else if !transaction.is_id_base_transaction() {
                 for (index, output) in transaction.get_outputs().iter().enumerate() {
                     let pk = output.pk;
-                    if !self.unspent_outputs.contains_key(&pk)
+                    if (!self.unspent_outputs.contains_key(&pk)
                         || !self.unspent_outputs[&pk].contains_key(&(
                             block_hash.clone(),
                             transaction_hash.clone(),
                             TransactionVarUint::from(index),
-                        ))
+                        )))
+                        && self.blockchain.blocks.len() > 1
                     {
-                        if self.blockchain.blocks.len() > 1 {
-                            return Err(format!(
-                            "Transaction with hash {} on block {}; trying to double-spend at index {}",
-                            transaction_hash, block_hash, index
-                        ));
-                        }
+                        return Err(format!(
+                        "Transaction with hash {} on block {}; trying to double-spend at index {}",
+                        transaction_hash, block_hash, index
+                    ));
                     }
                 }
             }
@@ -867,9 +856,9 @@ impl Wallet {
             for (i, output) in transaction.get_outputs().iter().enumerate() {
                 let index = TransactionVarUint::from(i);
                 let key = (block_hash.clone(), transaction_hash.clone(), index);
-                if !self.unspent_outputs.contains_key(&output.pk) {
-                    self.unspent_outputs.insert(output.pk, HashMap::new());
-                }
+                self.unspent_outputs
+                    .entry(output.pk)
+                    .or_insert_with(HashMap::new);
                 self.unspent_outputs
                     .get_mut(&output.pk)
                     .unwrap()
@@ -1083,7 +1072,7 @@ impl Wallet {
         let mut t0 = Transaction::new_coin_base_transaction(
             BlockHash::from([0u8; 32]),
             padded_message,
-            TransactionOutput::new(my_value.clone(), pk),
+            TransactionOutput::new(my_value, pk),
         )?;
 
         print!("Starting mining T0... ");
@@ -1125,9 +1114,10 @@ impl Wallet {
         println!("Done! {:?}", start.elapsed());
 
         let mut transactions_hash = [0u8; HASH_SIZE];
-        transactions_hash.copy_from_slice(&Sha3_256::digest(&Wallet::serialize_transactions(
-            &vec![t1.clone(), t0.clone()],
-        )?));
+        transactions_hash.copy_from_slice(&Sha3_256::digest(&Wallet::serialize_transactions(&[
+            t1.clone(),
+            t0.clone(),
+        ])?));
 
         let block = Block::new(
             BlockVersion::default(),
@@ -1172,15 +1162,6 @@ impl Wallet {
     ) -> Option<(PublicKey, BlockHash, TransactionHash, TransactionVarUint)> {
         self.nft_lookup.get(&nft_hash).cloned()
     }
-
-    // pub fn mine_until_complete(miner: &mut Miner) -> Option<Block> {
-    //     loop {
-    //         match miner.do_work() {
-    //             Poll::Ready(result) => return result,
-    //             Poll::Pending => {}
-    //         }
-    //     }
-    // }
 
     pub fn generate_ec_keys_with_rng(rng: &mut ThreadRng) -> (PublicKey, SecretKey) {
         let secp = Secp256k1::new();
