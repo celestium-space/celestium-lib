@@ -116,7 +116,7 @@ impl Transaction {
     pub fn count_inputs(&self) -> usize {
         self.inputs.len()
     }
-    
+
     pub fn count_outputs(&self) -> usize {
         self.outputs.len()
     }
@@ -141,7 +141,7 @@ impl Transaction {
             &self.inputs[0]
                 .0
                 .transaction_hash
-                .serialize_into(&mut base_transaction_message, &mut 0);
+                .serialize_into(&mut base_transaction_message, &mut 0)?;
             base_transaction_message[HASH_SIZE] = self.inputs[0].0.output_index.get_value() as u8;
             Ok(base_transaction_message)
         } else {
