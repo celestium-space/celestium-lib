@@ -764,6 +764,17 @@ impl Wallet {
     ) -> Result<(Block, Vec<Transaction>), String> {
         match self.pk {
             Some(pk) => {
+                for (_, block_transactions) in &self.on_chain_transactions {
+                    for hash in block_transactions.keys() {
+                        if self.off_chain_transactions.contains_key(hash) {
+                            return Err(format!(
+                                "Off chain transaction {} already on blockchain",
+                                hash
+                            ));
+                        }
+                    }
+                }
+
                 let mut total_fee = 0;
                 let mut transactions = Vec::new();
                 for transaction in self.off_chain_transactions.values() {
@@ -867,7 +878,8 @@ impl Wallet {
             for input in transaction.get_inputs() {
                 spent_outputs.push((input.transaction_hash, input.output_index.get_value()));
             }
-            transactions_indexmap.insert(transaction_hash, transaction.clone());
+            transactions_indexmap.insert(transaction_hash.clone(), transaction.clone());
+            self.off_chain_transactions.remove(&transaction_hash);
         }
 
         self.on_chain_transactions
@@ -1144,13 +1156,13 @@ impl Wallet {
 
     pub fn get_transaction(
         &self,
-        block_hash: BlockHash,
-        transaction_hash: TransactionHash,
+        block_hash: &BlockHash,
+        transaction_hash: &TransactionHash,
     ) -> Option<&Transaction> {
         if block_hash.is_zero_block() {
-            self.off_chain_transactions.get(&transaction_hash)
+            self.off_chain_transactions.get(transaction_hash)
         } else if let Some(b) = self.on_chain_transactions.get(&block_hash) {
-            b.get(&transaction_hash)
+            b.get(transaction_hash)
         } else {
             None
         }
