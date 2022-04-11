@@ -133,6 +133,10 @@ impl Transaction {
         self.inputs.iter().map(|(t, _)| t.clone()).collect()
     }
 
+    pub fn get_input(&self, i: usize) -> TransactionInput {
+        self.inputs[i].0.clone()
+    }
+
     pub fn get_base_transaction_message(
         &self,
     ) -> Result<[u8; BASE_TRANSACTION_MESSAGE_LEN], String> {

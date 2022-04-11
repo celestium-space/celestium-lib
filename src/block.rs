@@ -37,6 +37,10 @@ impl Block {
         self.serialize_into(&mut self_serialized, &mut 0).unwrap();
         *BlockHash::from_serialized(&Sha3_256::digest(&self_serialized), &mut 0).unwrap()
     }
+
+    pub fn transactions_hash(&self) -> BlockHash {
+        self.transactions_hash.clone()
+    }
 }
 
 impl Serialize for Block {
