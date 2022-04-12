@@ -831,55 +831,67 @@ impl Wallet {
         }
         let coin_base_transaction_hash = transactions.last().unwrap().hash().unwrap();
 
-        let mut spent_outputs = Vec::new();
         for transaction in transactions.iter() {
-            let transaction_hash = transaction.hash()?;
-            if transaction.is_coin_base_transaction()
-                && transaction.hash()? != coin_base_transaction_hash
-            {
-                return Err(format!(
-                    "Got wrong right most transaction, expected {} got {}",
-                    coin_base_transaction_hash,
-                    transaction.hash()?
-                ));
-            } else if !transaction.is_id_base_transaction() {
-                for (index, output) in transaction.get_outputs().iter().enumerate() {
-                    let pk = output.pk;
-                    if (!self.unspent_outputs.contains_key(&pk)
-                        || !self.unspent_outputs[&pk].contains_key(&(
-                            block_hash.clone(),
-                            transaction_hash.clone(),
-                            TransactionVarUint::from(index),
-                        )))
-                        && self.blockchain.blocks.len() > 1
-                    {
-                        return Err(format!(
-                        "Transaction with hash {} on block {}; trying to double-spend at index {}",
-                        transaction_hash, block_hash, index
+            if transaction.is_coin_base_transaction() {
+                if transaction.hash()? != coin_base_transaction_hash {
+                    return Err(format!(
+                        "Got wrong right most transaction, expected {} got {}",
+                        coin_base_transaction_hash,
+                        transaction.hash()?
                     ));
-                    }
+                }
+            } else {
+                if !self
+                    .off_chain_transactions
+                    .contains_key(&transaction.hash()?)
+                {
+                    return Err(format!(
+                        "Trying to add transaction {} onto blockchain that is not already in off chain transactions",
+                        coin_base_transaction_hash,
+                    ));
                 }
             }
         }
+
         let mut transactions_indexmap = IndexMap::new();
         for transaction in transactions.iter() {
             let transaction_hash = transaction.hash()?;
+            let off_chain_transaction = self.off_chain_transactions.remove(&transaction_hash);
             for (i, output) in transaction.get_outputs().iter().enumerate() {
                 let index = TransactionVarUint::from(i);
-                let key = (block_hash.clone(), transaction_hash.clone(), index);
-                self.unspent_outputs
-                    .entry(output.pk)
-                    .or_insert_with(HashMap::new);
-                self.unspent_outputs
-                    .get_mut(&output.pk)
-                    .unwrap()
-                    .insert(key, output.clone());
+                let key = (block_hash.clone(), transaction_hash.clone(), index.clone());
+                if let Some(_) = off_chain_transaction {
+                    if let Some(unspent_outputs) = self.unspent_outputs.get_mut(&output.pk) {
+                        if let Some(_) = unspent_outputs.remove(&(
+                            BlockHash::from([0u8; HASH_SIZE]),
+                            transaction_hash.clone(),
+                            index.clone(),
+                        )) {
+                            self.unspent_outputs
+                                .get_mut(&output.pk)
+                                .unwrap()
+                                .insert(key, output.clone());
+                        }
+                    }
+                    if let Ok(nft_id) = output.value.get_id() {
+                        if let Some((nft_pk, _, nft_th, nft_tvu)) = self.nft_lookup.remove(&nft_id)
+                        {
+                            self.nft_lookup
+                                .insert(nft_id, (nft_pk, block_hash.clone(), nft_th, nft_tvu));
+                        }
+                    }
+                } else {
+                    self.unspent_outputs
+                        .entry(output.pk)
+                        .or_insert_with(HashMap::new);
+                    self.unspent_outputs
+                        .get_mut(&output.pk)
+                        .unwrap()
+                        .insert(key, output.clone());
+                }
+
+                transactions_indexmap.insert(transaction_hash.clone(), transaction.clone());
             }
-            for input in transaction.get_inputs() {
-                spent_outputs.push((input.transaction_hash, input.output_index.get_value()));
-            }
-            transactions_indexmap.insert(transaction_hash.clone(), transaction.clone());
-            self.off_chain_transactions.remove(&transaction_hash);
         }
 
         self.on_chain_transactions
